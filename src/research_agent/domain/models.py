@@ -12,15 +12,13 @@ from pydantic import BaseModel
 
 
 class SearchIndexType(StrEnum):
-    """Identifies which search index a result originated from."""
+    """Identifies which search result originated from."""
 
     OPENALEX = "openalex"
     SEMANTIC_SCHOLAR = "semantic_scholar"
     ARXIV = "arxiv"
     PUBMED = "pubmed"
     CROSSREF = "crossref"
-    CORE = "core"
-    EUROPE_PMC = "europe_pmc"
 
 
 class SearchIndexId(BaseModel):

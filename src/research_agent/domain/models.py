@@ -5,8 +5,6 @@ for input/output contract validation. They do not enforce domain invariants
 beyond structural validity.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 from typing import Any
 

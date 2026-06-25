@@ -16,7 +16,10 @@ convention = "google"
     "S101",  # prevent usage of assert
     "D101",  # missing docstring in public class
     "D102",  # missing docstring for public function
+    "D103",  # missing docstring in public function
     "D104",  # missing docstring in public package
     "ANN201",  # Missing return type annotation for public function
     "PLR2004",  # magic value used in comparison
+    "SLF001",  # private member accessed
+    "INP001",  # implicit namespace package
 ]

@@ -5,8 +5,6 @@ Tool classes are plain async callables; this module is the only place that
 knows about DSPy.
 """
 
-from __future__ import annotations
-
 import dspy
 
 from research_agent.infrastructure.llm.tools.search.semantic_scholar import (

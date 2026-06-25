@@ -25,6 +25,9 @@ packages = ["src/research_agent", "src/datagen", "src/optimize"]
 
 [tool.pytest.ini_options]
 addopts = """--cov-report term-missing --cov src/research_agent -ra"""
+filterwarnings = [
+    "ignore::DeprecationWarning:dspy",
+]
 
 [tool.coverage.report]
 fail_under = 85

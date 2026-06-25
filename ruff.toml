@@ -1,0 +1,22 @@
+line-length = 88
+show-fixes = true
+
+[format]
+docstring-code-format = true
+
+[lint]
+select = ["ALL"]
+ignore = ["COM812"]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+"tests/**" = [
+    "S101",  # prevent usage of assert
+    "D101",  # missing docstring in public class
+    "D102",  # missing docstring for public function
+    "D104",  # missing docstring in public package
+    "ANN201",  # Missing return type annotation for public function
+    "PLR2004",  # magic value used in comparison
+]

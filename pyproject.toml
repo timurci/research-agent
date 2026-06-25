@@ -20,7 +20,7 @@ dependencies = [
 package = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/research_agent", "src/datagen"]
+packages = ["src/research_agent", "src/datagen", "src/optimize"]
 
 [tool.pytest.ini_options]
 addopts = """--cov-report term-missing --cov src/research_agent -ra"""

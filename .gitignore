@@ -11,3 +11,10 @@ wheels/
 
 # Package manager lock
 uv.lock
+
+# Pytest generated files
+.coverage
+
+# Generated data (keep directory placeholders via .gitkeep, ignore contents)
+data/**/output/*
+!data/**/output/.gitkeep

@@ -41,4 +41,4 @@ uv run generate-queries --model openai/gpt-4o-mini --api-key $OPENAI_API_KEY
 # → data/datagen/output/queries_train.jsonl
 ```
 
-See the details in [README](`src/datagen/README.md`).
+See the details in [README](src/datagen/README.md).

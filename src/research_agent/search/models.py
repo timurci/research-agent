@@ -8,7 +8,7 @@ beyond structural validity.
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SearchIndexType(StrEnum):
@@ -47,7 +47,7 @@ class PaperReference(BaseModel):
 class ResearchQuery(BaseModel):
     """A free-text research question, optionally scoped to domains."""
 
-    text: str
+    text: str = Field(min_length=5)
     domains: list[str] | None = None
 
 

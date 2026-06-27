@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from semanticscholar.Paper import Paper
 
-from research_agent.infrastructure.llm.tools.search.semantic_scholar import (
+from research_agent.search.tools import (
     SemanticScholarSearch,
 )
 

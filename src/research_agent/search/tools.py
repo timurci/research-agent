@@ -1,17 +1,20 @@
-"""Semantic Scholar search tool for the research agent.
+"""Search-index tools for the research agent.
+
+Layer: Infrastructure.
 
 Wraps the `semanticscholar` SDK's async client and normalizes the response
-into the domain `SearchResult` shape. The class is a plain async callable
-with no awareness of DSPy; the factory in `__init__.py` is responsible for
-wrapping it.
+into the domain `SearchResult` shape. `SemanticScholarSearch` is a plain
+async callable with no awareness of DSPy; `build_search_tools` is the only
+place in this slice that knows about DSPy.
 """
 
 from __future__ import annotations
 
+import dspy
 from semanticscholar.AsyncSemanticScholar import AsyncSemanticScholar
 from semanticscholar.Paper import Paper
 
-from research_agent.domain.models import (
+from research_agent.search.models import (
     PaperReference,
     SearchIndexId,
     SearchIndexType,
@@ -88,3 +91,25 @@ class SemanticScholarSearch:
             tldr=paper.tldr.text if paper.tldr else None,
             raw_metadata=paper.raw_data,
         )
+
+
+def build_search_tools(
+    *,
+    s2_api_key: str | None = None,
+) -> list[dspy.Tool]:
+    """Return the configured search-index tool suite.
+
+    Args:
+        s2_api_key: Optional Semantic Scholar API key. Unauthenticated traffic
+            shares a global 1,000 req/s pool; an authenticated key is
+            recommended for any non-interactive use.
+
+    Returns:
+        A list of `dspy.Tool` instances, one per configured search index.
+    """
+    return [
+        dspy.Tool(
+            SemanticScholarSearch(api_key=s2_api_key),
+            name="semantic_scholar_search",
+        )
+    ]

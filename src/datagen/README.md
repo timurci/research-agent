@@ -36,7 +36,7 @@ domain
 | `main.py` | CLI entry point and pipeline orchestrator. | `run`, `main` |
 | `config.py` | Static configuration: domains, intents, specificity levels, per-stratum repeat count, LLM model. | `INTENTS`, `SPECIFICITY_LEVELS`, `DOMAINS`, `QUERIES_PER_STRATUM`, `LLM_MODEL`, `GenerationConfig` |
 | `errors.py` | Project-specific exceptions for the pipeline. | `LLMContractError`, `InvalidGeneratedQueryError` |
-| `llm_client.py` | Thin DSPy/LiteLLM wrapper for raw text completions and JSON extraction. | `LLMClient` |
+| `llm_client.py` | Thin async `litellm` wrapper for raw text completions and JSON extraction. | `LLMClient` |
 | `query_generator.py` | Generates a batch of `ResearchQuery` per domain in a single LLM session. | `QueryGenerator` |
 | `validator.py` | Jaccard deduplication. | `deduplicate` |
 | `writer.py` | Writes the generated queries to `queries_train.jsonl`. | `write` |
@@ -59,6 +59,8 @@ domain
 python -m datagen.main --model MODEL --api-key KEY
                        [--out-dir DIR] [--limit N]
                        [--queries-per-stratum N]
+                       [--reasoning-effort LEVEL]
+                       [--extra-body JSON]
 ```
 
 Flags:
@@ -66,6 +68,12 @@ Flags:
   (e.g. `"openai/gpt-4o-mini"`).
 - `--api-key` — **required**. API key for the LLM provider.
 - `--out-dir` — where to write the JSONL file (default: `data/datagen/output`).
+- `--reasoning-effort` — reasoning effort for reasoning-capable models
+  (e.g. `low`, `medium`, `high`, `minimal`, `none`). Forwarded to
+  LiteLLM as `reasoning_effort=...` and ignored by models that do not
+  support it.
+- `--extra-body` — JSON object merged into the LiteLLM request body.
+  Common use case is OpenRouter provider routing; see below.
 
 Generated artifacts live under `data/`, kept out of `src/` so the source
 tree stays clean. The default `data/datagen/output/` directory is created
@@ -83,6 +91,47 @@ on first run; commit the `.gitkeep` placeholder but ignore the generated
   ```json
   {"text": "...", "domains": ["machine_learning", "artificial_intelligence"]}
   ```
+
+## LLMClient options
+
+`LLMClient` (in `llm_client.py`) is a thin async wrapper around
+`litellm.acompletion`. It accepts two optional kwargs beyond `model` and
+`api_key`:
+
+| Kwarg | Forwarded as | Purpose |
+|---|---|---|
+| `reasoning_effort` | `reasoning_effort=...` | Reasoning effort for reasoning-capable models. |
+| `extra_body` | `extra_body=...` | Arbitrary extra body fields. Common case: OpenRouter provider routing. |
+
+### Reasoning effort
+
+Pass `--reasoning-effort` (or `reasoning_effort=...` to `LLMClient`)
+to control reasoning on supported models. Examples:
+
+- OpenAI o-series / gpt-5: `low`, `medium`, `high` (`minimal` on gpt-5).
+- Google Gemini: `low`, `medium`, `high` (use `none` to disable).
+- OpenRouter: pass through; depends on the underlying model.
+
+Models that do not expose reasoning ignore the parameter.
+
+### OpenRouter provider routing
+
+Pass `--extra-body` with a JSON object that sets the `provider` key.
+OpenRouter uses the `order` list to pick upstream providers and
+`allow_fallbacks` (snake-case) to control whether later providers are
+tried when an earlier one fails.
+
+With fallbacks (try Anthropic first, fall back to OpenAI):
+
+```bash
+--extra-body '{"provider": {"order": ["Anthropic", "OpenAI"], "allow_fallbacks": true}}'
+```
+
+Without fallbacks (pin to the first provider, fail if it errors):
+
+```bash
+--extra-body '{"provider": {"order": ["openai", "together"], "allow_fallbacks": false}}'
+```
 
 ## Relationship to the runtime app
 

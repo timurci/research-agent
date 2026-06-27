@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic import TypeAdapter
 
@@ -61,6 +62,8 @@ class GenerationConfig:
     queries_per_stratum: int = QUERIES_PER_STRATUM
     limit: int | None = None
     out_dir: str = field(default="data/datagen/output")
+    reasoning_effort: str | None = None
+    extra_body: dict[str, Any] | None = None
 
 
 _QUERY_SCHEMA: str = json.dumps(

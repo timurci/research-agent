@@ -4,6 +4,8 @@ Usage:
     python -m datagen.main --model MODEL --api-key KEY
                            [--out-dir DIR] [--limit N]
                            [--queries-per-stratum N]
+                           [--reasoning-effort LEVEL]
+                           [--extra-body JSON]
 
 Generates synthetic ResearchQuery objects via per-domain LLM sessions
 and writes them to queries_train.jsonl, one query per line. The output
@@ -13,8 +15,10 @@ is consumed by the optimization pipeline in `src/optimize/`.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from datagen.config import (
     DOMAINS,
@@ -30,9 +34,14 @@ if TYPE_CHECKING:
     from research_agent.search.models import ResearchQuery
 
 
-def run(config: GenerationConfig) -> None:
+async def run(config: GenerationConfig) -> None:
     """Run the per-domain batch generation pipeline."""
-    client = LLMClient(config.llm_model, config.api_key)
+    client = LLMClient(
+        config.llm_model,
+        config.api_key,
+        reasoning_effort=config.reasoning_effort,
+        extra_body=config.extra_body,
+    )
     query_gen = QueryGenerator(client)
 
     items: list[tuple[str, ResearchQuery]] = []
@@ -42,7 +51,7 @@ def run(config: GenerationConfig) -> None:
         if config.limit is not None and produced >= config.limit:
             break
         try:
-            batch = query_gen.generate_batch(domain, n=config.queries_per_stratum)
+            batch = await query_gen.generate_batch(domain, n=config.queries_per_stratum)
         except Exception as exc:  # noqa: BLE001  # skip-and-log is the intended behavior
             print(  # noqa: T201  # CLI status output, not logging
                 f"[skip] batch generation failed for {domain}: {exc}",
@@ -61,6 +70,32 @@ def run(config: GenerationConfig) -> None:
 
     path = write(queries, config.out_dir)
     print(f"[done] wrote {path}")  # noqa: T201  # CLI status output, not logging
+
+
+def _parse_extra_body(raw: str | None) -> dict[str, Any] | None:
+    """Parse the ``--extra-body`` JSON string into a dict.
+
+    Returns ``None`` when no value was supplied. Raises ``SystemExit(2)``
+    with a clear stderr message when the value is set but malformed or
+    does not decode to a JSON object.
+    """
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(  # noqa: T201  # CLI status output, not logging
+            f"[error] --extra-body must be valid JSON: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from exc
+    if not isinstance(parsed, dict):
+        print(  # noqa: T201  # CLI status output, not logging
+            "[error] --extra-body must decode to a JSON object",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return parsed
 
 
 def main() -> None:
@@ -89,6 +124,29 @@ def main() -> None:
         default=QUERIES_PER_STRATUM,
         help="Queries per (intent, specificity) pair per domain.",
     )
+    parser.add_argument(
+        "--reasoning-effort",
+        default=None,
+        help=(
+            "Reasoning effort for reasoning-capable models "
+            '(e.g. "low", "medium", "high", "minimal", "none"). '
+            "Forwarded to LiteLLM as reasoning_effort=... "
+            "and ignored by models that do not support it."
+        ),
+    )
+    parser.add_argument(
+        "--extra-body",
+        default=None,
+        help=(
+            "JSON object merged into the LiteLLM request body. "
+            "OpenRouter provider routing with fallbacks: "
+            '\'{"provider": {"order": ["Anthropic", "OpenAI"], '
+            '"allow_fallbacks": true}}\'. '
+            "OpenRouter provider routing without fallbacks: "
+            '\'{"provider": {"order": ["openai", "together"], '
+            '"allow_fallbacks": false}}\'.'
+        ),
+    )
     args = parser.parse_args()
 
     config = GenerationConfig(
@@ -97,8 +155,10 @@ def main() -> None:
         out_dir=args.out_dir,
         limit=args.limit,
         queries_per_stratum=args.queries_per_stratum,
+        reasoning_effort=args.reasoning_effort,
+        extra_body=_parse_extra_body(args.extra_body),
     )
-    run(config)
+    asyncio.run(run(config))
 
 
 if __name__ == "__main__":

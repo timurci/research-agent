@@ -33,7 +33,7 @@ class QueryGenerator:
         """
         self._client = client
 
-    def generate_batch(self, domain: str, n: int) -> list[ResearchQuery]:
+    async def generate_batch(self, domain: str, n: int) -> list[ResearchQuery]:
         """Generate one LLM session's worth of queries for a single domain.
 
         Args:
@@ -51,7 +51,7 @@ class QueryGenerator:
                 schema.
         """
         prompt = build_batch_prompt(domain, n)
-        text = self._client.complete(prompt)
+        text = await self._client.complete(prompt)
         try:
             return _QueryList.validate_json(text)
         except ValidationError as exc:

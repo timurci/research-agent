@@ -12,9 +12,12 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "arxiv>=4.0.0",
+    "biopython>=1.87",
     "dspy>=3.2.1",
+    "habanero>=2.9.2",
     "pydantic>=2.13.4",
-    "semanticscholar>=0.12",
+    "semanticscholar>=0.12.0",
 ]
 
 [tool.uv]

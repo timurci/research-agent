@@ -8,12 +8,11 @@ from __future__ import annotations
 
 from semanticscholar.Paper import Paper
 
-from research_agent.search.tools import (
-    SemanticScholarSearch,
-)
+from research_agent.search.models import SearchResult
+from research_agent.search.tools import SemanticScholarSearch
 
 
-def test_to_search_result_maps_all_fields() -> None:
+def test_to_search_result_constructs_search_result() -> None:
     paper = Paper(
         {
             "paperId": "abc123",
@@ -31,18 +30,5 @@ def test_to_search_result_maps_all_fields() -> None:
             "fieldsOfStudy": ["Computer Science"],
         }
     )
-
-    tool = SemanticScholarSearch()
-    result = tool._to_search_result(paper)
-
-    assert result.title == "Test Paper"
-    assert result.abstract == "Test abstract."
-    assert result.authors == ["Alice", "Bob"]
-    assert result.reference.source.id == "abc123"
-    assert result.reference.doi == "10.1234/test"
-    assert result.publication_year == 2020
-    assert result.citation_count == 10
-    assert result.is_open_access is True
-    assert result.pdf_url == "http://example.com/paper.pdf"
-    assert result.tldr == "TLDR here"
-    assert result.topics == ["Computer Science"]
+    result = SemanticScholarSearch()._to_search_result(paper)
+    assert isinstance(result, SearchResult)

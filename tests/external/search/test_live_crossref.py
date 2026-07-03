@@ -11,7 +11,8 @@ import asyncio
 
 import pytest
 
-from research_agent.search.tools import CrossRefSearch
+from research_agent.search.models import SearchIndexType
+from research_agent.search.tools import LiteratureSearch
 
 _TIMEOUT_SECONDS: float = 30.0
 
@@ -20,15 +21,15 @@ _TIMEOUT_SECONDS: float = 30.0
 @pytest.mark.asyncio
 async def test_search_finds_results() -> None:
     """Search returns papers with DOIs and titles populated."""
-    tool = CrossRefSearch()
+    tool = LiteratureSearch()
 
     results = await asyncio.wait_for(
-        tool("deep learning neural networks", limit=5),
+        tool(SearchIndexType.CROSSREF, "deep learning neural networks", limit=5),
         timeout=_TIMEOUT_SECONDS,
     )
 
     assert len(results) > 0
     for sample in results:
-        assert sample.title is not None
-        assert sample.reference.doi is not None
-        assert sample.reference.source.index.value == "crossref"
+        assert sample.paper.title is not None
+        assert sample.paper.source.doi is not None
+        assert sample.search_reference.index == SearchIndexType.CROSSREF

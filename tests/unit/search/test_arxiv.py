@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 
 import arxiv
 
-from research_agent.search.models import SearchResult
-from research_agent.search.tools import ArXivSearch
+from research_agent.search.models import SearchIndexType, SearchResult
+from research_agent.search.tools import _ArXivSearch
 
 
 def _make_result(  # noqa: PLR0913  # test helper mirroring arxiv.Result constructor
@@ -22,21 +22,19 @@ def _make_result(  # noqa: PLR0913  # test helper mirroring arxiv.Result constru
     doi: str | None = None,
     categories: list[str] | None = None,
     pdf_link: str | None = None,
-    entry_id: str | None = None,
+    entry_id: str = "http://arxiv.org/abs/2306.04338v1",
     journal_ref: str | None = None,
     comment: str | None = None,
     published: datetime | None = None,
 ) -> arxiv.Result:
-    links: list[arxiv.Result.Link] = []
-    if entry_id:
-        links.append(
-            arxiv.Result.Link(
-                href=entry_id,
-                title=None,
-                rel="alternate",
-                content_type=None,
-            )
+    links: list[arxiv.Result.Link] = [
+        arxiv.Result.Link(
+            href=entry_id,
+            title=None,
+            rel="alternate",
+            content_type=None,
         )
+    ]
     if pdf_link:
         links.append(
             arxiv.Result.Link(
@@ -47,7 +45,7 @@ def _make_result(  # noqa: PLR0913  # test helper mirroring arxiv.Result constru
             )
         )
     return arxiv.Result(
-        entry_id=entry_id or "",
+        entry_id=entry_id,
         title=title,
         summary=summary,
         authors=authors or [],
@@ -62,26 +60,27 @@ def _make_result(  # noqa: PLR0913  # test helper mirroring arxiv.Result constru
 
 
 def test_to_search_result_handles_missing_doi() -> None:
-    sr = ArXivSearch()._to_search_result(
+    sr = _ArXivSearch()._to_search_result(
         _make_result(doi=None, authors=[arxiv.Result.Author(name="Alice")])
     )
     assert isinstance(sr, SearchResult)
-    assert sr.reference.doi is None
+    assert sr.paper.source.doi is None
 
 
 def test_to_search_result_uses_journal_ref_as_venue() -> None:
-    sr = ArXivSearch()._to_search_result(
+    sr = _ArXivSearch()._to_search_result(
         _make_result(
             journal_ref="Nature 2020",
             authors=[arxiv.Result.Author(name="Alice")],
         )
     )
     assert isinstance(sr, SearchResult)
-    assert sr.venue == "Nature 2020"
+    assert sr.paper.raw_metadata is not None
+    assert sr.paper.raw_metadata["venue"] == "Nature 2020"
 
 
 def test_to_search_result_falls_back_to_comment_when_no_journal_ref() -> None:
-    sr = ArXivSearch()._to_search_result(
+    sr = _ArXivSearch()._to_search_result(
         _make_result(
             journal_ref="",
             comment="Accepted at NeurIPS",
@@ -89,7 +88,8 @@ def test_to_search_result_falls_back_to_comment_when_no_journal_ref() -> None:
         )
     )
     assert isinstance(sr, SearchResult)
-    assert sr.venue == "Accepted at NeurIPS"
+    assert sr.paper.raw_metadata is not None
+    assert sr.paper.raw_metadata["venue"] == "Accepted at NeurIPS"
 
 
 def test_to_search_result_extracts_pdf_from_links_when_no_pdf_url() -> None:
@@ -99,30 +99,36 @@ def test_to_search_result_extracts_pdf_from_links_when_no_pdf_url() -> None:
     )
     result.links = [
         arxiv.Result.Link(
+            href="http://arxiv.org/abs/2306.04338v1",
+            title=None,
+            rel="alternate",
+            content_type=None,
+        ),
+        arxiv.Result.Link(
             href="http://arxiv.org/pdf/2306.04338v1",
             title="pdf",
             rel="related",
             content_type="application/pdf",
-        )
+        ),
     ]
-    sr = ArXivSearch()._to_search_result(result)
+    sr = _ArXivSearch()._to_search_result(result)
     assert isinstance(sr, SearchResult)
-    assert sr.pdf_url == "http://arxiv.org/pdf/2306.04338v1"
+    assert str(sr.paper.source.pdf_url) == "http://arxiv.org/pdf/2306.04338v1"
 
 
 def test_to_search_result_sentinel_year_is_none() -> None:
-    sr = ArXivSearch()._to_search_result(
+    sr = _ArXivSearch()._to_search_result(
         _make_result(
             authors=[arxiv.Result.Author(name="Alice")],
             published=datetime(1, 1, 1, tzinfo=UTC),
         )
     )
     assert isinstance(sr, SearchResult)
-    assert sr.publication_year is None
+    assert sr.paper.publication_year is None
 
 
 def test_to_search_result_filters_none_author_names() -> None:
-    sr = ArXivSearch()._to_search_result(
+    sr = _ArXivSearch()._to_search_result(
         _make_result(
             authors=[
                 arxiv.Result.Author(name="Alice"),
@@ -132,4 +138,11 @@ def test_to_search_result_filters_none_author_names() -> None:
         )
     )
     assert isinstance(sr, SearchResult)
-    assert sr.authors == ["Alice", "Bob"]
+    assert sr.paper.authors == ["Alice", "Bob"]
+
+
+def test_to_search_result_index_is_arxiv() -> None:
+    sr = _ArXivSearch()._to_search_result(
+        _make_result(authors=[arxiv.Result.Author(name="Alice")])
+    )
+    assert sr.search_reference.index == SearchIndexType.ARXIV

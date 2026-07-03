@@ -4,26 +4,31 @@ Layer: Infrastructure.
 
 Wraps synchronous SDKs for arXiv, PubMed/NCBI, and CrossRef (plus the
 existing async Semantic Scholar client) and normalises every response
-into the domain ``SearchResult`` shape.  Each tool class is a plain async
-callable with no awareness of DSPy; ``build_search_tools`` is the only
-place in this slice that knows about DSPy.
+into the domain ``SearchResult`` shape.  ``LiteratureSearch`` is the
+public surface: it is a single async callable that dispatches to one of
+four private per-index handlers (``_SemanticScholarSearch``,
+``_ArXivSearch``, ``_PubMedSearch``, ``_CrossRefSearch``) based on the
+requested ``SearchIndexType``.  The private handlers carry the
+index-specific implementation; ``LiteratureSearch`` is what the search
+node wraps in ``dspy.Tool`` and exposes to the agent.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Protocol
 
 import arxiv
-import dspy
 from Bio import Entrez
 from habanero import Crossref
+from pydantic import HttpUrl
 from semanticscholar.AsyncSemanticScholar import AsyncSemanticScholar
 from semanticscholar.Paper import Paper
 
 from research_agent.search.models import (
-    PaperReference,
-    SearchIndexId,
+    PaperInfo,
+    PaperSource,
+    SearchIndexReference,
     SearchIndexType,
     SearchResult,
 )
@@ -37,12 +42,32 @@ _DEFAULT_MAILTO: str = "research-agent@example.com"
 _STRIP_JATS = re.compile(r"<[^>]+>")
 
 
-class SemanticScholarSearch:
+class UnknownIndexError(Exception):
+    """Raised when ``LiteratureSearch`` receives an unknown index."""
+
+
+def _require_url(value: str | None, *, context: str) -> str:
+    """Return *value* if non-empty, else raise ``ValueError`` with context.
+
+    ``PaperSource.url`` is required, but several upstream records may
+    legitimately lack a URL.  A missing URL is a data quality bug at the
+    tool layer: it cannot be silently dropped, and a fabricated fallback
+    would mislead downstream consumers, so propagate the issue.
+    """
+    if not value:
+        msg = f"{context}: cannot normalise record without a URL"
+        raise ValueError(msg)
+    return value
+
+
+class _SemanticScholarSearch:
     """Search Semantic Scholar for academic papers matching a free-text query.
 
     Returns paper metadata including title, abstract, authors, year, venue,
     citation count, and open-access PDF link when available.
     """
+
+    _client: AsyncSemanticScholar
 
     def __init__(self, *, api_key: str | None = None, timeout: int = 30) -> None:
         """Initialise the search tool with an async Semantic Scholar client.
@@ -59,13 +84,13 @@ class SemanticScholarSearch:
         else:
             self._client = AsyncSemanticScholar(api_key=api_key, timeout=timeout)
 
-    async def __call__(self, query: str, *, limit: int = 10) -> list[SearchResult]:
+    async def __call__(self, query: str, *, limit: int) -> list[SearchResult]:
         """Search Semantic Scholar for papers matching a free-text query.
 
         Args:
             query: Plain-text search query.
             limit: Maximum number of results to return. Clamped to the
-                Semantic Scholar API range of [1, 100]; defaults to 10.
+                Semantic Scholar API range of [1, 100].
 
         Returns:
             A list of normalised ``SearchResult`` objects, one per matched
@@ -81,30 +106,35 @@ class SemanticScholarSearch:
     def _to_search_result(self, paper: Paper) -> SearchResult:
         external = paper.externalIds or {}
         pdf = paper.openAccessPdf or {}
+        url = paper.url or f"https://www.semanticscholar.org/paper/{paper.paperId}"
         return SearchResult(
-            title=paper.title,
-            abstract=paper.abstract,
-            authors=[a.name for a in (paper.authors or []) if a.name],
-            reference=PaperReference(
-                source=SearchIndexId(
-                    index=SearchIndexType.SEMANTIC_SCHOLAR,
-                    id=paper.paperId,
+            paper=PaperInfo(
+                source=PaperSource(
+                    url=HttpUrl(_require_url(url, context="Semantic Scholar")),
+                    doi=external.get("DOI"),
+                    pdf_url=HttpUrl(pdf["url"]) if pdf.get("url") else None,
                 ),
-                doi=external.get("DOI"),
+                title=paper.title,
+                abstract=paper.abstract,
+                authors=[a.name for a in (paper.authors or []) if a.name],
+                publication_year=paper.year,
+                citation_count=paper.citationCount,
+                is_open_access=paper.isOpenAccess,
+                raw_metadata={
+                    **(paper.raw_data or {}),
+                    "venue": paper.venue,
+                    "fields_of_study": paper.fieldsOfStudy,
+                    "tldr": paper.tldr.text if paper.tldr else None,
+                },
             ),
-            url=paper.url,
-            pdf_url=pdf.get("url"),
-            publication_year=paper.year,
-            venue=paper.venue,
-            citation_count=paper.citationCount,
-            is_open_access=paper.isOpenAccess,
-            topics=paper.fieldsOfStudy,
-            tldr=paper.tldr.text if paper.tldr else None,
-            raw_metadata=paper.raw_data,
+            search_reference=SearchIndexReference(
+                index=SearchIndexType.SEMANTIC_SCHOLAR,
+                id=paper.paperId,
+            ),
         )
 
 
-class ArXivSearch:
+class _ArXivSearch:
     """Search arXiv for academic papers matching a free-text query.
 
     Returns paper metadata including title, abstract, authors, category
@@ -130,14 +160,14 @@ class ArXivSearch:
         self._delay_seconds = delay_seconds
         self._num_retries = num_retries
 
-    async def __call__(self, query: str, *, limit: int = 10) -> list[SearchResult]:
+    async def __call__(self, query: str, *, limit: int) -> list[SearchResult]:
         """Search arXiv for papers matching a free-text query.
 
         Args:
             query: Plain-text search query. May include the same field
                 prefixes as the arXiv API (``ti:``, ``au:``, ``abs:``,
                 ``cat:``, ``all:``).
-            limit: Maximum number of results to return. Defaults to 10.
+            limit: Maximum number of results to return.
 
         Returns:
             A list of normalised ``SearchResult`` objects, one per matched
@@ -164,38 +194,39 @@ class ArXivSearch:
             None,
         )
         return SearchResult(
-            title=result.title or None,
-            abstract=result.summary or None,
-            authors=[a.name for a in (result.authors or []) if a.name],
-            reference=PaperReference(
-                source=SearchIndexId(
-                    index=SearchIndexType.ARXIV,
-                    id=result.entry_id,
+            paper=PaperInfo(
+                source=PaperSource(
+                    url=HttpUrl(_require_url(result.entry_id, context="arXiv")),
+                    doi=result.doi or None,
+                    pdf_url=HttpUrl(pdf_url) if pdf_url else None,
                 ),
-                doi=result.doi or None,
+                title=result.title or None,
+                abstract=result.summary or None,
+                authors=[a.name for a in (result.authors or []) if a.name],
+                publication_year=(
+                    result.published.year
+                    if result.published and result.published.year > 1
+                    else None
+                ),
+                citation_count=None,
+                is_open_access=True,
+                raw_metadata={
+                    "venue": result.journal_ref or result.comment or None,
+                    "topics": list(result.categories) if result.categories else None,
+                    "primary_category": result.primary_category,
+                    "comment": result.comment,
+                    "journal_ref": result.journal_ref,
+                    "updated": result.updated.isoformat() if result.updated else None,
+                },
             ),
-            url=result.entry_id,
-            pdf_url=pdf_url,
-            publication_year=(
-                result.published.year
-                if result.published and result.published.year > 1
-                else None
+            search_reference=SearchIndexReference(
+                index=SearchIndexType.ARXIV,
+                id=result.entry_id,
             ),
-            venue=result.journal_ref or result.comment or None,
-            citation_count=None,
-            is_open_access=True,
-            topics=list(result.categories) if result.categories else None,
-            tldr=None,
-            raw_metadata={
-                "primary_category": result.primary_category,
-                "comment": result.comment,
-                "journal_ref": result.journal_ref,
-                "updated": result.updated.isoformat() if result.updated else None,
-            },
         )
 
 
-class PubMedSearch:
+class _PubMedSearch:
     """Search PubMed / NCBI for biomedical literature matching a free-text query.
 
     Returns paper metadata including title, abstract, authors, journal
@@ -220,13 +251,13 @@ class PubMedSearch:
         if api_key is not None:
             object.__setattr__(Entrez, "api_key", api_key)
 
-    async def __call__(self, query: str, *, limit: int = 10) -> list[SearchResult]:
+    async def __call__(self, query: str, *, limit: int) -> list[SearchResult]:
         """Search PubMed for papers matching a free-text query.
 
         Args:
             query: Plain-text search query. Supports the full PubMed
                 query syntax (MeSH terms, field tags, boolean operators).
-            limit: Maximum number of results to return. Defaults to 10.
+            limit: Maximum number of results to return.
 
         Returns:
             A list of normalised ``SearchResult`` objects, one per matched
@@ -296,34 +327,34 @@ class PubMedSearch:
         pmid = str(med.get("PMID", ""))
 
         return SearchResult(
-            title=title or None,
-            abstract=abstract or None,
-            authors=authors,
-            reference=PaperReference(
-                source=SearchIndexId(
-                    index=SearchIndexType.PUBMED,
-                    id=pmid,
+            paper=PaperInfo(
+                source=PaperSource(
+                    url=HttpUrl(f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"),
+                    doi=doi,
+                    pdf_url=None,
                 ),
-                doi=doi,
+                title=title or None,
+                abstract=abstract or None,
+                authors=authors,
+                publication_year=publication_year,
+                citation_count=None,
+                is_open_access=None,
+                raw_metadata={
+                    "venue": venue or None,
+                    "pmid": pmid,
+                    "publication_types": [
+                        str(p) for p in art.get("PublicationTypeList", [])
+                    ],
+                },
             ),
-            url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-            pdf_url=None,
-            publication_year=publication_year,
-            venue=venue or None,
-            citation_count=None,
-            is_open_access=None,
-            topics=None,
-            tldr=None,
-            raw_metadata={
-                "pmid": pmid,
-                "publication_types": [
-                    str(p) for p in art.get("PublicationTypeList", [])
-                ],
-            },
+            search_reference=SearchIndexReference(
+                index=SearchIndexType.PUBMED,
+                id=pmid,
+            ),
         )
 
 
-class CrossRefSearch:
+class _CrossRefSearch:
     """Search CrossRef for academic works matching a free-text query.
 
     Returns paper metadata including title, abstract (when deposited),
@@ -340,12 +371,12 @@ class CrossRefSearch:
         """
         self._mailto = mailto
 
-    async def __call__(self, query: str, *, limit: int = 10) -> list[SearchResult]:
+    async def __call__(self, query: str, *, limit: int) -> list[SearchResult]:
         """Search CrossRef for works matching a free-text query.
 
         Args:
             query: Plain-text search query.
-            limit: Maximum number of results to return. Defaults to 10.
+            limit: Maximum number of results to return.
 
         Returns:
             A list of normalised ``SearchResult`` objects, one per matched
@@ -383,6 +414,7 @@ class CrossRefSearch:
                 authors.append(name)
 
         doi = item.get("DOI")
+        url = item.get("URL") or (f"https://doi.org/{doi}" if doi else "")
 
         container = item.get("container-title", [])
         venue = container[0] if container else None
@@ -403,64 +435,112 @@ class CrossRefSearch:
         resource_url = item.get("resource", {}).get("primary", {}).get("URL")
 
         return SearchResult(
-            title=title,
-            abstract=abstract,
-            authors=authors,
-            reference=PaperReference(
-                source=SearchIndexId(
-                    index=SearchIndexType.CROSSREF,
-                    id=doi or "",
+            paper=PaperInfo(
+                source=PaperSource(
+                    url=HttpUrl(_require_url(url, context="CrossRef")),
+                    doi=doi,
+                    pdf_url=HttpUrl(resource_url) if resource_url else None,
                 ),
-                doi=doi,
+                title=title,
+                abstract=abstract,
+                authors=authors,
+                publication_year=publication_year,
+                citation_count=item.get("is-referenced-by-count"),
+                is_open_access=None,
+                raw_metadata={
+                    "venue": venue,
+                    "type": item.get("type"),
+                    "publisher": item.get("publisher"),
+                    "issn": item.get("ISSN"),
+                },
             ),
-            url=item.get("URL"),
-            pdf_url=resource_url,
-            publication_year=publication_year,
-            venue=venue,
-            citation_count=item.get("is-referenced-by-count"),
-            is_open_access=None,
-            topics=None,
-            tldr=None,
-            raw_metadata={
-                "type": item.get("type"),
-                "publisher": item.get("publisher"),
-                "issn": item.get("ISSN"),
-            },
+            search_reference=SearchIndexReference(
+                index=SearchIndexType.CROSSREF,
+                id=doi or "",
+            ),
         )
 
 
-def build_search_tools(
-    *,
-    s2_api_key: str | None = None,
-    pubmed_api_key: str | None = None,
-) -> list[dspy.Tool]:
-    """Return the configured search-index tool suite.
+class LiteratureSearch:
+    """Unified literature search that dispatches to one of four private index handlers.
 
-    Args:
-        s2_api_key: Optional Semantic Scholar API key. Unauthenticated
-            traffic shares a global 1,000 req/s pool; an authenticated key
-            is recommended for any non-interactive use.
-        pubmed_api_key: Optional NCBI API key for elevated rate limits
-            (10 req/s vs ~3 req/s unauthenticated).
+    The single async callable the search node wraps in ``dspy.Tool`` and
+    exposes to the agent.  The agent picks the index per call via
+    *search_index*; the actual API call is delegated to the matching
+    private handler.
 
-    Returns:
-        A list of ``dspy.Tool`` instances, one per configured search index.
+    Each ``SearchIndexType`` value in the domain enum maps to exactly one
+    private handler.  ``__call__`` is keyword-only on ``limit`` and
+    rejects unknown indices with ``LiteratureSearchError``.
     """
-    return [
-        dspy.Tool(
-            SemanticScholarSearch(api_key=s2_api_key),
-            name="semantic_scholar_search",
-        ),
-        dspy.Tool(
-            ArXivSearch(),
-            name="arxiv_search",
-        ),
-        dspy.Tool(
-            PubMedSearch(api_key=pubmed_api_key),
-            name="pubmed_search",
-        ),
-        dspy.Tool(
-            CrossRefSearch(),
-            name="crossref_search",
-        ),
-    ]
+
+    def __init__(
+        self,
+        *,
+        s2_api_key: str | None = None,
+        pubmed_api_key: str | None = None,
+    ) -> None:
+        """Initialise the unified search tool and its private index handlers.
+
+        Args:
+            s2_api_key: Optional Semantic Scholar API key forwarded to
+                the private Semantic Scholar handler.  Unauthenticated
+                traffic shares a global 1,000 req/s pool; an
+                authenticated key is recommended for any non-interactive
+                use.
+            pubmed_api_key: Optional NCBI API key forwarded to the
+                private PubMed handler for elevated rate limits
+                (10 req/s vs ~3 req/s unauthenticated).
+        """
+        self._handlers: dict[SearchIndexType, _IndexSearch] = {
+            SearchIndexType.SEMANTIC_SCHOLAR: _SemanticScholarSearch(
+                api_key=s2_api_key,
+            ),
+            SearchIndexType.ARXIV: _ArXivSearch(),
+            SearchIndexType.PUBMED: _PubMedSearch(api_key=pubmed_api_key),
+            SearchIndexType.CROSSREF: _CrossRefSearch(),
+        }
+
+    async def __call__(
+        self,
+        search_index: SearchIndexType,
+        query: str,
+        *,
+        limit: int,
+    ) -> list[SearchResult]:
+        """Search the chosen index for papers matching a free-text query.
+
+        Args:
+            search_index: Which index to query.  One of the
+                ``SearchIndexType`` enum values (Semantic Scholar, arXiv,
+                PubMed, CrossRef).
+            query: Plain-text search query.  Query syntax is delegated to
+                the chosen index's handler.
+            limit: Maximum number of results to return.  Required; each
+                handler clamps it to its own API range.
+
+        Returns:
+            A list of normalised ``SearchResult`` objects returned by the
+            chosen index.  May be shorter than *limit* (or empty) when
+            the index returns fewer matches.
+
+        Raises:
+            UnknownIndexError: If *search_index* is not a recognised
+                ``SearchIndexType`` value.
+        """
+        handler = self._handlers.get(search_index)
+        if handler is None:
+            msg = f"unknown search index: {search_index!r}"
+            raise UnknownIndexError(msg)
+        return await handler(query, limit=limit)
+
+
+class _IndexSearch(Protocol):
+    """Structural shape satisfied by the four private index handlers.
+
+    Local to this module and not exported.  ``LiteratureSearch`` only
+    relies on the ``async __call__(query, *, limit) -> list[SearchResult]``
+    shape.
+    """
+
+    async def __call__(self, query: str, *, limit: int) -> list[SearchResult]: ...

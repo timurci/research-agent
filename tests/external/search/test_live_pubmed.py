@@ -11,7 +11,8 @@ import asyncio
 
 import pytest
 
-from research_agent.search.tools import PubMedSearch
+from research_agent.search.models import SearchIndexType
+from research_agent.search.tools import LiteratureSearch
 
 _TIMEOUT_SECONDS: float = 30.0
 
@@ -20,18 +21,19 @@ _TIMEOUT_SECONDS: float = 30.0
 @pytest.mark.asyncio
 async def test_search_finds_brca1_papers() -> None:
     """Search returns BRCA1-mutation papers with expected fields populated."""
-    tool = PubMedSearch()
+    tool = LiteratureSearch()
 
     results = await asyncio.wait_for(
-        tool("BRCA1 mutation cancer[Title/Abstract]", limit=5),
+        tool(SearchIndexType.PUBMED, "BRCA1 mutation cancer[Title/Abstract]", limit=5),
         timeout=_TIMEOUT_SECONDS,
     )
 
     assert len(results) > 0
     sample = results[0]
-    assert sample.title is not None
-    assert len(sample.title) > 10
-    assert len(sample.authors) > 0
-    assert sample.venue is not None
-    assert sample.url is not None
-    assert "pubmed.ncbi.nlm.nih.gov" in sample.url
+    assert sample.paper.title is not None
+    assert len(sample.paper.title) > 10
+    assert len(sample.paper.authors) > 0
+    assert sample.paper.raw_metadata is not None
+    assert sample.paper.raw_metadata.get("venue") is not None
+    assert sample.paper.source.url is not None
+    assert "pubmed.ncbi.nlm.nih.gov" in str(sample.paper.source.url)

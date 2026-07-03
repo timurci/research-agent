@@ -8,7 +8,7 @@ beyond structural validity.
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
 class SearchIndexType(StrEnum):
@@ -20,28 +20,35 @@ class SearchIndexType(StrEnum):
     CROSSREF = "crossref"
 
 
-class SearchIndexId(BaseModel):
-    """A paper's native identifier within a specific search index.
-
-    The native ID is only meaningful in the context of its index, so the
-    two are kept together as a unit. An ID lifted out of its index is
-    ambiguous; a `(index, id)` pair is not.
-    """
+class SearchIndexReference(BaseModel):
+    """A paper's identifier within a specific search index."""
 
     index: SearchIndexType
-    id: str
+    id: str = Field(..., description="Identifier of the paper within the search index")
 
 
-class PaperReference(BaseModel):
-    """How a paper is identified and located in the literature.
+class PaperSource(BaseModel):
+    """How a paper is identified and located in the literature."""
 
-    `source` carries the index-specific `(index, id)` pair that pinpoints
-    the paper inside a particular catalog. `doi` is kept separate because
-    it is a cross-index standard that does not depend on any single index.
-    """
+    url: HttpUrl = Field(..., description="URL of the paper")
+    doi: str | None = Field(None, description="Cross-index standard DOI identifier")
+    pdf_url: HttpUrl | None = Field(None, description="URL of the paper's PDF")
 
-    source: SearchIndexId
-    doi: str | None = None
+
+class PaperInfo(BaseModel):
+    """Information about a paper, including its source and metadata."""
+
+    source: PaperSource
+
+    title: str | None = None
+    abstract: str | None = None
+
+    authors: list[str]
+    publication_year: int | None = None
+    citation_count: int | None = None
+    is_open_access: bool | None = None
+
+    raw_metadata: dict[str, Any] | None = None
 
 
 class ResearchQuery(BaseModel):
@@ -52,35 +59,7 @@ class ResearchQuery(BaseModel):
 
 
 class SearchResult(BaseModel):
-    """A normalized search result returned by a search index tool.
+    """A unified search result returned by a search index tool."""
 
-    `title` and `abstract` are the primary signals for downstream relevance
-    scoring. Results missing either are heavily penalized by the optimization
-    metric in `optimize.metric` and should be treated as quality bugs at the
-    tool layer; the fields are typed optional only because some upstream
-    indexes (notably Semantic Scholar) omit them in a non-trivial fraction
-    of records for legal reasons.
-    """
-
-    title: str | None = None
-    abstract: str | None = None
-    authors: list[str]
-
-    reference: PaperReference
-
-    url: str | None = None
-    pdf_url: str | None = None
-    publication_year: int | None = None
-    venue: str | None = None
-    citation_count: int | None = None
-    is_open_access: bool | None = None
-    topics: list[str] | None = None
-    tldr: str | None = None
-
-    raw_metadata: dict[str, Any] | None = None
-
-
-class SearchResults(BaseModel):
-    """A collection of search results."""
-
-    results: list[SearchResult]
+    paper: PaperInfo
+    search_reference: SearchIndexReference

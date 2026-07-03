@@ -47,7 +47,7 @@ The domain layer owns business meaning, invariants, and behavior. Within a slice
 
 Domain models are implemented as Pydantic models. Pydantic is used for **input/output contract validation**, not for encoding domain invariants. A domain object should never exist in an inconsistent state; invariants are guaranteed at construction time, not patched afterwards.
 
-In the search slice these are `ResearchQuery`, `SearchResult`, `SearchResults`, `PaperReference`, and `SearchIndexId`:
+In the search slice these are `ResearchQuery`, `SearchResult`, `PaperInfo`, `PaperSource`, and `SearchIndexReference`:
 
 ```python
 from pydantic import BaseModel
@@ -56,25 +56,26 @@ class ResearchQuery(BaseModel):
     text: str
     domains: list[str] | None = None
 
-class SearchResults(BaseModel):
-    results: list[SearchResult]
+class SearchResult(BaseModel):
+    paper: PaperInfo
+    search_reference: SearchIndexReference
 ```
 
 ### Domain nodes
 
 A **node** is a domain service that represents a bounded capability. It contains business rules and collaborates with a `LanguageModel` port to perform language-model-powered reasoning. A node does not know about DSPy, prompts, tools, or optimizers.
 
-The search slice exposes `SearchSuggestionNode`, which takes a `ResearchQuery` and returns `SearchResults`:
+The search slice exposes `SearchSuggestionNode`, which takes a `ResearchQuery` and returns `list[SearchResult]`:
 
 ```python
-from research_agent.search.models import ResearchQuery, SearchResults
+from research_agent.search.models import ResearchQuery, SearchResult
 from research_agent.shared.ports import LanguageModel
 
 class SearchSuggestionNode:
-    def __init__(self, llm: LanguageModel[ResearchQuery, SearchResults]) -> None:
+    def __init__(self, llm: LanguageModel[ResearchQuery, list[SearchResult]]) -> None:
         self._llm = llm
 
-    def suggest(self, query: ResearchQuery) -> SearchResults:
+    def suggest(self, query: ResearchQuery) -> list[SearchResult]:
         if not query.text.strip():
             raise ValueError("Cannot suggest with an empty query")
         return self._llm.generate(query)
@@ -105,14 +106,14 @@ The protocol is generic so each node can declare its concrete input and output t
 The application layer orchestrates nodes to fulfill use cases. Workflows are plain Python services in the runtime shell (`research_agent/workflows.py`). They contain **no business logic**; they only coordinate slices' domain nodes and translate between presentation concerns and domain inputs.
 
 ```python
-from research_agent.search.models import ResearchQuery, SearchResults
+from research_agent.search.models import ResearchQuery, SearchResult
 from research_agent.search.node import SearchSuggestionNode
 
 class DiscoveryWorkflow:
     def __init__(self, search_node: SearchSuggestionNode) -> None:
         self._search = search_node
 
-    def run(self, query: ResearchQuery) -> SearchResults:
+    def run(self, query: ResearchQuery) -> list[SearchResult]:
         return self._search.suggest(query)
 ```
 
@@ -143,12 +144,12 @@ Signatures import a slice's domain models directly and add prompt-level instruct
 
 ```python
 import dspy
-from research_agent.search.models import ResearchQuery, SearchResults
+from research_agent.search.models import ResearchQuery, SearchResult
 
 class SuggestSearch(dspy.Signature):
     """Suggest a set of relevant papers for a research query."""
     input: ResearchQuery = dspy.InputField()
-    output: SearchResults = dspy.OutputField()
+    output: list[SearchResult] = dspy.OutputField()
 ```
 
 ### DSPy programs
@@ -157,13 +158,13 @@ Programs wire signatures, tools, and predictors together. The search slice's stu
 
 ```python
 import dspy
-from research_agent.search.tools import build_search_tools
+from research_agent.search.tools import LiteratureSearch
 
 class SearchSuggestionProgram(dspy.Module):
     def __init__(self) -> None:
         self.re_act = dspy.ReAct(
             SuggestSearch,
-            tools=build_search_tools(),
+            tools=[dspy.Tool(LiteratureSearch(), name="literature_search")],
         )
 
     def forward(self, input: ResearchQuery) -> dspy.Prediction:
@@ -176,15 +177,10 @@ Tool definitions and tool-calling mechanics belong to infrastructure. A tool may
 
 ```python
 import dspy
-from research_agent.search.tools import SemanticScholarSearch
+from research_agent.search.tools import LiteratureSearch
 
-def build_search_tools() -> list[dspy.Tool]:
-    return [
-        dspy.Tool(
-            SemanticScholarSearch(),
-            name="semantic_scholar_search",
-        )
-    ]
+def build_literature_tool() -> dspy.Tool:
+    return dspy.Tool(LiteratureSearch(), name="literature_search")
 ```
 
 No business rule should be encoded inside a tool itself.
@@ -208,7 +204,7 @@ DSPy optimizes what it can see: signatures, programs, tools, and metrics. All of
 The optimization metric should still be defined in domain terms:
 
 ```python
-def search_relevance_score(query: ResearchQuery, results: SearchResults) -> float:
+def search_relevance_score(query: ResearchQuery, results: list[SearchResult]) -> float:
     return domain_evaluator.score(query, results)
 ```
 
@@ -219,7 +215,7 @@ The domain does not know that optimization happened; it only receives a configur
 The optimization pipeline is a sibling to datagen, not part of the runtime application:
 
 - `src/datagen/` — generates the synthetic query training set (`queries_train.jsonl`).
-- `src/optimize/` — DSPy optimization pipeline for the `SearchSuggestionNode`. It loads `queries_train.jsonl`, runs the node live against real indexes, and scores the returned `SearchResults` with an embedding-similarity metric defined in domain terms. The metric, embedder, and dataset loader live here; the DSPy student program, signatures, and tools live in `research_agent.search.program` / `search.tools` once built.
+- `src/optimize/` — DSPy optimization pipeline for the `SearchSuggestionNode`. It loads `queries_train.jsonl`, runs the node live against real indexes, and scores the returned `list[SearchResult]` with an embedding-similarity metric defined in domain terms. The metric, embedder, and dataset loader live here; the DSPy student program, signatures, and tools live in `research_agent.search.program` / `search.tools` once built.
 
 Neither package is imported by `research_agent` at runtime.
 
@@ -248,9 +244,9 @@ src/research_agent/
 │   └── ports.py                LanguageModel[InputT, OutputT] protocol (reserved)
 ├── search/                     THE search slice (SearchSuggestionNode); portable
 │   ├── __init__.py             slice docstring: layer-tag rules, dependency direction
-│   ├── models.py               [Layer: Domain] ResearchQuery, SearchResult, SearchResults, ...
+│   ├── models.py               [Layer: Domain] ResearchQuery, SearchResult, PaperInfo, PaperSource, SearchIndexReference, ...
 │   ├── node.py                 [Layer: Domain service] SearchSuggestionNode (reserved)
-│   ├── tools.py                [Layer: Infrastructure] SemanticScholarSearch + build_search_tools()
+│   ├── tools.py                [Layer: Infrastructure] LiteratureSearch (public) + private _SemanticScholarSearch / _ArXivSearch / _PubMedSearch / _CrossRefSearch
 │   └── program.py              [Layer: Infrastructure] SearchSuggestionProgram (reserved)
 ├── workflows.py                [Layer: Application] workflow orchestration (reserved)
 └── api/                        [Layer: Presentation] runtime entrypoints (reserved)

@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import asyncio
 
+import dspy
 import pytest
 
-from research_agent.search.tools import build_search_tools
+from research_agent.search.tools import LiteratureSearch
 
 _TIMEOUT_SECONDS: float = 15.0
 
@@ -24,11 +25,11 @@ _TIMEOUT_SECONDS: float = 15.0
 @pytest.mark.asyncio
 async def test_search_finds_bert_paper() -> None:
     """Search returns the BERT paper with expected fields populated."""
-    tools = build_search_tools()
-    tool = tools[0]
+    tool = dspy.Tool(LiteratureSearch(), name="literature_search")
 
     results = await asyncio.wait_for(
         tool.acall(
+            search_index="semantic_scholar",
             query="BERT: Pre-training of Deep Bidirectional Transformers",
             limit=5,
         ),
@@ -36,6 +37,6 @@ async def test_search_finds_bert_paper() -> None:
     )
 
     sample = results[0]
-    assert "Pre-training" in (sample.title or "")
-    assert "Deep Bidirectional Transformers" in (sample.title or "")
-    assert any("Devlin" in a for a in sample.authors)
+    assert "Pre-training" in (sample.paper.title or "")
+    assert "Deep Bidirectional Transformers" in (sample.paper.title or "")
+    assert any("Devlin" in a for a in sample.paper.authors)

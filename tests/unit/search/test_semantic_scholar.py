@@ -6,10 +6,13 @@ no network required.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
+import pytest
 from semanticscholar.Paper import Paper
 
-from research_agent.search.models import SearchResult
-from research_agent.search.tools import SemanticScholarSearch
+from research_agent.search.models import SearchIndexType, SearchResult
+from research_agent.search.tools import _SemanticScholarSearch
 
 
 def test_to_search_result_constructs_search_result() -> None:
@@ -30,5 +33,64 @@ def test_to_search_result_constructs_search_result() -> None:
             "fieldsOfStudy": ["Computer Science"],
         }
     )
-    result = SemanticScholarSearch()._to_search_result(paper)
+    result = _SemanticScholarSearch()._to_search_result(paper)
     assert isinstance(result, SearchResult)
+    assert result.search_reference.index == SearchIndexType.SEMANTIC_SCHOLAR
+    assert result.search_reference.id == "abc123"
+    assert result.paper.title == "Test Paper"
+    assert result.paper.abstract == "Test abstract."
+    assert result.paper.authors == ["Alice", "Bob"]
+    assert result.paper.citation_count == 10
+    assert result.paper.is_open_access is True
+    assert str(result.paper.source.pdf_url) == "http://example.com/paper.pdf"
+    assert result.paper.source.doi == "10.1234/test"
+    assert result.paper.raw_metadata is not None
+    assert result.paper.raw_metadata["venue"] == "Test Venue"
+    assert result.paper.raw_metadata["fields_of_study"] == ["Computer Science"]
+    assert result.paper.raw_metadata["tldr"] == "TLDR here"
+
+
+def test_to_search_result_falls_back_url_when_missing() -> None:
+    paper = Paper(
+        {
+            "paperId": "abc123",
+            "title": "Test Paper",
+            "authors": [],
+            "url": None,
+        }
+    )
+    result = _SemanticScholarSearch()._to_search_result(paper)
+    assert (
+        str(result.paper.source.url) == "https://www.semanticscholar.org/paper/abc123"
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_normalises_list_response() -> None:
+    paper = Paper({"paperId": "p1", "title": "T", "authors": [], "url": "http://x"})
+    tool = _SemanticScholarSearch()
+    tool._client.search_paper = AsyncMock(  # type: ignore[method-assign]
+        return_value=_StubSearchResults([paper])
+    )
+
+    results = await tool("query", limit=5)
+
+    assert len(results) == 1
+    assert results[0].search_reference.id == "p1"
+
+
+@pytest.mark.asyncio
+async def test_call_normalises_single_paper_response() -> None:
+    paper = Paper({"paperId": "p2", "title": "T", "authors": [], "url": "http://x"})
+    tool = _SemanticScholarSearch()
+    tool._client.search_paper = AsyncMock(return_value=paper)  # type: ignore[method-assign]
+
+    results = await tool("query", limit=5)
+
+    assert len(results) == 1
+    assert results[0].search_reference.id == "p2"
+
+
+class _StubSearchResults:
+    def __init__(self, items: list[Paper]) -> None:
+        self.items = items

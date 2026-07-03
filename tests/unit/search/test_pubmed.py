@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from research_agent.search.models import SearchResult
-from research_agent.search.tools import PubMedSearch
+from research_agent.search.models import SearchIndexType, SearchResult
+from research_agent.search.tools import _PubMedSearch
 
 
 def _make_article(  # noqa: PLR0913  # test helper mirroring PubMed efetch record shape
@@ -46,44 +46,51 @@ def test_to_search_result_handles_abstract_list() -> None:
         "Part one.",
         "Part two.",
     ]
-    sr = PubMedSearch._to_search_result(article)
+    sr = _PubMedSearch._to_search_result(article)
     assert isinstance(sr, SearchResult)
-    assert sr.abstract == "Part one. Part two."
+    assert sr.paper.abstract == "Part one. Part two."
 
 
 def test_to_search_result_handles_collective_name() -> None:
-    sr = PubMedSearch._to_search_result(
+    sr = _PubMedSearch._to_search_result(
         _make_article(authors=[{"CollectiveName": "The Cancer Genome Atlas Network"}]),
     )
     assert isinstance(sr, SearchResult)
-    assert sr.authors == ["The Cancer Genome Atlas Network"]
+    assert sr.paper.authors == ["The Cancer Genome Atlas Network"]
 
 
 def test_to_search_result_handles_missing_year() -> None:
-    sr = PubMedSearch._to_search_result(_make_article(year=""))
+    sr = _PubMedSearch._to_search_result(_make_article(year=""))
     assert isinstance(sr, SearchResult)
-    assert sr.publication_year is None
+    assert sr.paper.publication_year is None
 
 
 def test_to_search_result_handles_missing_title_and_abstract() -> None:
-    sr = PubMedSearch._to_search_result(_make_article(title="", abstract=""))
+    sr = _PubMedSearch._to_search_result(_make_article(title="", abstract=""))
     assert isinstance(sr, SearchResult)
-    assert sr.title is None
-    assert sr.abstract is None
+    assert sr.paper.title is None
+    assert sr.paper.abstract is None
 
 
 def test_to_search_result_handles_non_list_abstract() -> None:
     article = _make_article(abstract="")
     article["MedlineCitation"]["Article"]["Abstract"]["AbstractText"] = "Single string"
-    sr = PubMedSearch._to_search_result(article)
+    sr = _PubMedSearch._to_search_result(article)
     assert isinstance(sr, SearchResult)
-    assert sr.abstract == "Single string"
+    assert sr.paper.abstract == "Single string"
 
 
 def test_to_search_result_stores_publication_types() -> None:
-    sr = PubMedSearch._to_search_result(
+    sr = _PubMedSearch._to_search_result(
         _make_article(publication_types=["Journal Article", "Review"]),
     )
     assert isinstance(sr, SearchResult)
-    assert sr.raw_metadata is not None
-    assert sr.raw_metadata["publication_types"] == ["Journal Article", "Review"]
+    assert sr.paper.raw_metadata is not None
+    assert sr.paper.raw_metadata["publication_types"] == ["Journal Article", "Review"]
+
+
+def test_to_search_result_index_is_pubmed() -> None:
+    sr = _PubMedSearch._to_search_result(_make_article(pmid="99999"))
+    assert sr.search_reference.index == SearchIndexType.PUBMED
+    assert sr.search_reference.id == "99999"
+    assert str(sr.paper.source.url) == "https://pubmed.ncbi.nlm.nih.gov/99999/"

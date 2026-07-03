@@ -48,13 +48,6 @@ prek run <hook-id>             # run a single hook (e.g. ruff-check, ruff-format
 prek run --files <path>        # target specific files
 ```
 
-Current state (honest, as of last update):
-- `ruff check` is configured strict (`select = ["ALL"]`); a backlog of violations exists across the touched packages and is being worked down. Do not introduce new violations — run `ruff check` and fix what your change adds.
-- `ruff format` has not been applied to all files; run it before committing.
-- `ty check` passes.
-- Tests live under `tests/unit` (deterministic) and `tests/external` (live — hits the real Semantic Scholar API). Live tests are tagged `live` and skipped by default via the root `conftest.py`; run them explicitly with `uv run pytest -m live`. Coverage gate 85% on `src/research_agent` (`--cov src/research_agent -ra`) runs clean offline.
-- `research_agent.search` is partially scaffolded: `search/tools.py` (the Semantic Scholar adapter + DSPy `build_search_tools()` factory) exists; the DSPy student program `search.program` is still pending (the `optimize/main.py` `NotImplementedError` gates on it), as is the domain service `search.node`.
-
 ## Project structure
 
 The codebase is organized as **portable capability slices** under `src/research_agent/`, not as physical layer folders. Each slice is a self-contained folder grouping that capability's domain, application, and infrastructure concerns; layers are *virtual*, declared by the role documented in each file's docstring (e.g. `models.py` = Domain, `tools.py` = Infrastructure). A slice must be copyable into another project and work without relying on sibling slices — it may depend only on `research_agent.shared` (cross-slice contracts) and external libraries.
@@ -68,8 +61,8 @@ src/
       ports.py                    LanguageModel[InputT, OutputT] protocol (not yet present)
     search/                       THE search slice (SearchSuggestionNode); portable
       __init__.py                 slice docstring: layer-tag rules, dependency direction
-      models.py                   [Layer: Domain] ResearchQuery, SearchResult, SearchResults, PaperReference, SearchIndexId, SearchIndexType
-      tools.py                    [Layer: Infrastructure] SemanticScholarSearch + build_search_tools() (dspy-aware)
+      models.py                   [Layer: Domain] ResearchQuery, SearchResult, PaperInfo, PaperSource, SearchIndexReference, SearchIndexType
+      tools.py                    [Layer: Infrastructure] LiteratureSearch
       node.py                     [Layer: Domain service] SearchSuggestionNode (not yet present)
       program.py                  [Layer: Infrastructure] SearchSuggestionProgram, DSPy student (not yet present)
     workflows.py                  [Layer: Application] workflow orchestration (not yet present)
@@ -109,10 +102,10 @@ The runtime shell (`research_agent/__init__.py`, `workflows.py`, `api/`) imports
 
 ## Domain modeling conventions
 
-- **Ubiquitous language.** A class name must tell the reader what the object *is* in domain terms. Vague `Request`/`Result` pairings are forbidden. Example: `ResultIdentifier` was renamed to `PaperReference` (+ `SearchIndexId`) because "result of what, identifier of what?" had no answer.
+- **Ubiquitous language.** A class name must tell the reader what the object *is* in domain terms. Vague `Request`/`Result` pairings are forbidden. Example: `ResultIdentifier` was renamed to `SearchIndexReference` (+ `PaperSource`) because "result of what, identifier of what?" had no answer.
 - **Pydantic validates I/O contracts; it does not enforce domain invariants.** A domain object should never exist in an inconsistent state — invariants are guaranteed at construction, not patched after.
-- **Group tightly-coupled fields into their own model.** A native ID is meaningless without its index, so `SearchIndexId(index, id)` is a unit; `PaperReference` bundles `source: SearchIndexId` plus the cross-index `doi`.
-- **One node in the current workflow.** `SearchSuggestionNode` takes `ResearchQuery`, returns `SearchResults`. Do not add a scoring/ranking node, `ScoreRequest`, `ScoredResults`, or categorical relevance labels. Relevance is enforced by prompt optimization, not a downstream domain stage.
+- **Group tightly-coupled fields into their own model.** A native ID is meaningless without its index, so `SearchIndexReference(index, id)` is a unit; `SearchResult` bundles `paper: PaperInfo` (with `source: PaperSource(url, doi, pdf_url)`) plus the cross-index `search_reference: SearchIndexReference`.
+- **One node in the current workflow.** `SearchSuggestionNode` takes `ResearchQuery`, returns `list[SearchResult]`. Do not add a scoring/ranking node, `ScoreRequest`, `ScoredResults`, or categorical relevance labels. Relevance is enforced by prompt optimization, not a downstream domain stage.
 
 ## Code conventions
 
@@ -128,7 +121,7 @@ The runtime shell (`research_agent/__init__.py`, `workflows.py`, `api/`) imports
 ## Tooling boundaries
 
 - `src/datagen` — generates `queries_train.jsonl` only. Strata → `QueryGenerator` → Jaccard dedup → domain coverage check → write. Output: `data/datagen/output/queries_train.jsonl`.
-- `src/optimize` — DSPy optimization. Loads queries, runs the search node live, scores `SearchResults` with the embedding-similarity metric `mean(sims) + 10 * n_results * min(sims)`. Metric, embedder, and dataset loader are usable today; `main.py` raises `NotImplementedError` at the optimizer-wiring step until `research_agent.search.program` (the DSPy student program) is built.
+- `src/optimize` — DSPy optimization. Loads queries, runs the search node live, scores `list[SearchResult]` with the embedding-similarity metric `mean(sims) + 10 * n_results * min(sims)`. Metric, embedder, and dataset loader are usable today; `main.py` raises `NotImplementedError` at the optimizer-wiring step until `research_agent.search.program` (the DSPy student program) is built.
 - `data/` — generated artifacts. `.gitkeep` files are committable; everything else under `data/**/output/` is gitignored.
 
 ## What NOT to do

@@ -9,8 +9,8 @@ output is consumed by the optimization pipeline in `src/optimize/`.
 ## Purpose
 
 Generate varied `ResearchQuery` objects to use as the training set when
-optimizing the `SearchSuggestionNode` prompt. The optimization pipeline
-runs the node live and scores the returned `SearchResults` with an
+optimizing the search prompt. The optimization pipeline
+runs the search capability live and scores the returned `list[SearchResult]` with an
 embedding-similarity metric (defined in `src/optimize/`), so the datagen
 package only needs to produce queries — not pre-baked result sets or labels.
 
@@ -138,7 +138,7 @@ Without fallbacks (pin to the first provider, fail if it errors):
 - Imports `research_agent.search.models` for type validation.
 - The runtime `research_agent` package never imports from `datagen`.
 - The downstream consumer is `src/optimize/`, which loads the JSONL file
-  into `dspy.Example` objects and runs the search-node optimization loop.
+  into `dspy.Example` objects and runs the search optimization loop.
 
 ## Configuration
 

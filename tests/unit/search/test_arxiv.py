@@ -13,11 +13,18 @@ import arxiv
 from research_agent.search.models import SearchIndexType, SearchResult
 from research_agent.search.tools import _ArXivSearch
 
+_DEFAULT_ABSTRACT = (
+    "This paper introduces a new approach to the problem under study, "
+    "presenting a detailed methodology, a thorough experimental evaluation, "
+    "and an analysis of the results. The findings advance the state of the "
+    "art and open several directions for future work in the area."
+)
+
 
 def _make_result(  # noqa: PLR0913  # test helper mirroring arxiv.Result constructor
     *,
     title: str = "Test Paper",
-    summary: str = "Test abstract.",
+    summary: str = _DEFAULT_ABSTRACT,
     authors: list[arxiv.Result.Author] | None = None,
     doi: str | None = None,
     categories: list[str] | None = None,
@@ -145,4 +152,28 @@ def test_to_search_result_index_is_arxiv() -> None:
     sr = _ArXivSearch()._to_search_result(
         _make_result(authors=[arxiv.Result.Author(name="Alice")])
     )
-    assert sr.search_reference.index == SearchIndexType.ARXIV
+    assert sr.search_index_reference[0].index == SearchIndexType.ARXIV
+
+
+def test_to_search_result_coerces_empty_doi_to_none() -> None:
+    sr = _ArXivSearch()._to_search_result(
+        _make_result(
+            doi="",
+            authors=[arxiv.Result.Author(name="Alice")],
+        )
+    )
+    assert sr.paper.source.doi is None
+
+
+def test_to_search_result_coerces_empty_metadata_strings_to_none() -> None:
+    sr = _ArXivSearch()._to_search_result(
+        _make_result(
+            authors=[arxiv.Result.Author(name="Alice")],
+            journal_ref="",
+            comment="",
+        )
+    )
+    assert sr.paper.raw_metadata is not None
+    assert sr.paper.raw_metadata["primary_category"] is None
+    assert sr.paper.raw_metadata["comment"] is None
+    assert sr.paper.raw_metadata["journal_ref"] is None

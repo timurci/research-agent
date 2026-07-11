@@ -95,42 +95,54 @@ class _SemanticScholarSearch:
         Returns:
             A list of normalised ``SearchResult`` objects, one per matched
             paper. May be shorter than *limit* (or empty) when the API
-            returns fewer matches.
+            returns fewer matches, or when matched records lack a title
+            or abstract (silently dropped here).
         """
         clamped = max(_MIN_LIMIT, min(limit, _MAX_LIMIT))
         results = await self._client.search_paper(query, fields=_FIELDS, limit=clamped)
         if isinstance(results, Paper):
-            return [self._to_search_result(results)]
-        return [self._to_search_result(paper) for paper in results.items]
+            papers: list[Paper] = [results]
+        else:
+            papers = list(results.items)
+        papers = [
+            p for p in papers if (p.title or "").strip() and (p.abstract or "").strip()
+        ]
+        return [self._to_search_result(p) for p in papers]
 
     def _to_search_result(self, paper: Paper) -> SearchResult:
         external = paper.externalIds or {}
         pdf = paper.openAccessPdf or {}
         url = paper.url or f"https://www.semanticscholar.org/paper/{paper.paperId}"
+        pdf_url = HttpUrl(pdf["url"]) if pdf.get("url") else None
+        title = (paper.title or "").strip()
+        abstract = (paper.abstract or "").strip()
+        doi = external.get("DOI") or None
         return SearchResult(
             paper=PaperInfo(
                 source=PaperSource(
                     url=HttpUrl(_require_url(url, context="Semantic Scholar")),
-                    doi=external.get("DOI"),
-                    pdf_url=HttpUrl(pdf["url"]) if pdf.get("url") else None,
+                    open_access=bool(paper.isOpenAccess) and pdf_url is not None,
+                    doi=doi,
+                    pdf_url=pdf_url,
                 ),
-                title=paper.title,
-                abstract=paper.abstract,
+                title=title,
+                abstract=abstract,
                 authors=[a.name for a in (paper.authors or []) if a.name],
                 publication_year=paper.year,
                 citation_count=paper.citationCount,
-                is_open_access=paper.isOpenAccess,
                 raw_metadata={
                     **(paper.raw_data or {}),
-                    "venue": paper.venue,
-                    "fields_of_study": paper.fieldsOfStudy,
-                    "tldr": paper.tldr.text if paper.tldr else None,
+                    "venue": paper.venue or None,
+                    "fields_of_study": paper.fieldsOfStudy or None,
+                    "tldr": (paper.tldr.text.strip() or None) if paper.tldr else None,
                 },
             ),
-            search_reference=SearchIndexReference(
-                index=SearchIndexType.SEMANTIC_SCHOLAR,
-                id=paper.paperId,
-            ),
+            search_index_reference=[
+                SearchIndexReference(
+                    index=SearchIndexType.SEMANTIC_SCHOLAR,
+                    id=paper.paperId,
+                ),
+            ],
         )
 
 
@@ -172,7 +184,8 @@ class _ArXivSearch:
         Returns:
             A list of normalised ``SearchResult`` objects, one per matched
             paper. May be shorter than *limit* (or empty) when the API
-            returns fewer matches.
+            returns fewer matches, or when matched records lack a title
+            or abstract (silently dropped here).
         """
         clamped = max(_MIN_LIMIT, min(limit, 2000))
 
@@ -186,6 +199,9 @@ class _ArXivSearch:
             return list(client.results(search))
 
         results = await run_async(_search)
+        results = [
+            r for r in results if (r.title or "").strip() and (r.summary or "").strip()
+        ]
         return [self._to_search_result(r) for r in results]
 
     def _to_search_result(self, result: arxiv.Result) -> SearchResult:
@@ -193,15 +209,19 @@ class _ArXivSearch:
             (link.href for link in (result.links or []) if link.title == "pdf"),
             None,
         )
+        title = (result.title or "").strip()
+        summary = (result.summary or "").strip()
+        resolved_pdf = HttpUrl(pdf_url) if pdf_url else None
         return SearchResult(
             paper=PaperInfo(
                 source=PaperSource(
                     url=HttpUrl(_require_url(result.entry_id, context="arXiv")),
+                    open_access=resolved_pdf is not None,
                     doi=result.doi or None,
-                    pdf_url=HttpUrl(pdf_url) if pdf_url else None,
+                    pdf_url=resolved_pdf,
                 ),
-                title=result.title or None,
-                abstract=result.summary or None,
+                title=title,
+                abstract=summary,
                 authors=[a.name for a in (result.authors or []) if a.name],
                 publication_year=(
                     result.published.year
@@ -209,20 +229,21 @@ class _ArXivSearch:
                     else None
                 ),
                 citation_count=None,
-                is_open_access=True,
                 raw_metadata={
                     "venue": result.journal_ref or result.comment or None,
                     "topics": list(result.categories) if result.categories else None,
-                    "primary_category": result.primary_category,
-                    "comment": result.comment,
-                    "journal_ref": result.journal_ref,
+                    "primary_category": result.primary_category or None,
+                    "comment": result.comment or None,
+                    "journal_ref": result.journal_ref or None,
                     "updated": result.updated.isoformat() if result.updated else None,
                 },
             ),
-            search_reference=SearchIndexReference(
-                index=SearchIndexType.ARXIV,
-                id=result.entry_id,
-            ),
+            search_index_reference=[
+                SearchIndexReference(
+                    index=SearchIndexType.ARXIV,
+                    id=result.entry_id,
+                ),
+            ],
         )
 
 
@@ -262,7 +283,8 @@ class _PubMedSearch:
         Returns:
             A list of normalised ``SearchResult`` objects, one per matched
             paper. May be shorter than *limit* (or empty) when the API
-            returns fewer matches.
+            returns fewer matches, or when matched records lack a title
+            or abstract (silently dropped here).
         """
         clamped = max(_MIN_LIMIT, min(limit, 1000))
 
@@ -286,19 +308,31 @@ class _PubMedSearch:
             return records.get("PubmedArticle", [])
 
         articles = await run_async(_search)
-        return [self._to_search_result(a) for a in articles]
+        articles = [a for a in articles if _PubMedSearch._has_title_and_abstract(a)]
+        return [_PubMedSearch._to_search_result(a) for a in articles]
+
+    @staticmethod
+    def _has_title_and_abstract(article: dict[str, Any]) -> bool:
+        art = article["MedlineCitation"]["Article"]
+        title = str(art.get("ArticleTitle", "")).strip()
+        abstract_parts = art.get("Abstract", {}).get("AbstractText", [])
+        if isinstance(abstract_parts, list):
+            abstract = " ".join(str(p) for p in abstract_parts).strip()
+        else:
+            abstract = str(abstract_parts).strip() if abstract_parts else ""
+        return bool(title) and bool(abstract)
 
     @staticmethod
     def _to_search_result(article: dict[str, Any]) -> SearchResult:
         med = article["MedlineCitation"]
         art = med["Article"]
 
-        title = str(art.get("ArticleTitle", ""))
+        title = str(art.get("ArticleTitle", "")).strip()
         abstract_parts = art.get("Abstract", {}).get("AbstractText", [])
         if isinstance(abstract_parts, list):
-            abstract = " ".join(str(p) for p in abstract_parts)
+            abstract = " ".join(str(p) for p in abstract_parts).strip()
         else:
-            abstract = str(abstract_parts) if abstract_parts else ""
+            abstract = str(abstract_parts).strip() if abstract_parts else ""
 
         author_list = art.get("AuthorList", [])
         authors: list[str] = []
@@ -321,7 +355,9 @@ class _PubMedSearch:
         for eid in art.get("ELocationID", []):
             attrs = getattr(eid, "attributes", {}) or {}
             if attrs.get("EIdType") == "doi":
-                doi = str(eid)
+                doi_candidate = str(eid).strip() or None
+                if doi_candidate:
+                    doi = doi_candidate
                 break
 
         pmid = str(med.get("PMID", ""))
@@ -330,27 +366,30 @@ class _PubMedSearch:
             paper=PaperInfo(
                 source=PaperSource(
                     url=HttpUrl(f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"),
+                    open_access=False,
                     doi=doi,
                     pdf_url=None,
                 ),
-                title=title or None,
-                abstract=abstract or None,
+                title=title,
+                abstract=abstract,
                 authors=authors,
                 publication_year=publication_year,
                 citation_count=None,
-                is_open_access=None,
                 raw_metadata={
                     "venue": venue or None,
                     "pmid": pmid,
                     "publication_types": [
                         str(p) for p in art.get("PublicationTypeList", [])
-                    ],
+                    ]
+                    or None,
                 },
             ),
-            search_reference=SearchIndexReference(
-                index=SearchIndexType.PUBMED,
-                id=pmid,
-            ),
+            search_index_reference=[
+                SearchIndexReference(
+                    index=SearchIndexType.PUBMED,
+                    id=pmid,
+                ),
+            ],
         )
 
 
@@ -381,7 +420,8 @@ class _CrossRefSearch:
         Returns:
             A list of normalised ``SearchResult`` objects, one per matched
             work. May be shorter than *limit* (or empty) when the API
-            returns fewer matches.
+            returns fewer matches, or when matched records lack a title
+            or abstract (silently dropped here).
         """
         clamped = max(_MIN_LIMIT, min(limit, 1000))
 
@@ -394,15 +434,24 @@ class _CrossRefSearch:
             return response.get("message", {}).get("items", [])
 
         items = await run_async(_search)
-        return [self._to_search_result(item) for item in items]
+        items = [i for i in items if _CrossRefSearch._has_title_and_abstract(i)]
+        return [_CrossRefSearch._to_search_result(i) for i in items]
+
+    @staticmethod
+    def _has_title_and_abstract(item: dict[str, Any]) -> bool:
+        title_list = item.get("title", [])
+        title = (title_list[0] if title_list else "").strip()
+        raw_abstract = item.get("abstract", "")
+        abstract = _STRIP_JATS.sub("", raw_abstract).strip() if raw_abstract else ""
+        return bool(title) and bool(abstract)
 
     @staticmethod
     def _to_search_result(item: dict[str, Any]) -> SearchResult:
         title_list = item.get("title", [])
-        title = title_list[0] if title_list else None
+        title = (title_list[0] if title_list else "").strip()
 
         raw_abstract = item.get("abstract", "")
-        abstract = _STRIP_JATS.sub("", raw_abstract).strip() if raw_abstract else None
+        abstract = _STRIP_JATS.sub("", raw_abstract).strip() if raw_abstract else ""
 
         author_list = item.get("author", [])
         authors: list[str] = []
@@ -413,11 +462,11 @@ class _CrossRefSearch:
             if name:
                 authors.append(name)
 
-        doi = item.get("DOI")
+        doi = item.get("DOI") or None
         url = item.get("URL") or (f"https://doi.org/{doi}" if doi else "")
 
         container = item.get("container-title", [])
-        venue = container[0] if container else None
+        venue = (container[0] if container else "") or None
 
         pub = (
             item.get("published-print")
@@ -433,31 +482,34 @@ class _CrossRefSearch:
         )
 
         resource_url = item.get("resource", {}).get("primary", {}).get("URL")
+        resolved_pdf = HttpUrl(resource_url) if resource_url else None
 
         return SearchResult(
             paper=PaperInfo(
                 source=PaperSource(
                     url=HttpUrl(_require_url(url, context="CrossRef")),
+                    open_access=resolved_pdf is not None,
                     doi=doi,
-                    pdf_url=HttpUrl(resource_url) if resource_url else None,
+                    pdf_url=resolved_pdf,
                 ),
                 title=title,
                 abstract=abstract,
                 authors=authors,
                 publication_year=publication_year,
                 citation_count=item.get("is-referenced-by-count"),
-                is_open_access=None,
                 raw_metadata={
                     "venue": venue,
-                    "type": item.get("type"),
-                    "publisher": item.get("publisher"),
-                    "issn": item.get("ISSN"),
+                    "type": item.get("type") or None,
+                    "publisher": item.get("publisher") or None,
+                    "issn": item.get("ISSN") or None,
                 },
             ),
-            search_reference=SearchIndexReference(
-                index=SearchIndexType.CROSSREF,
-                id=doi or "",
-            ),
+            search_index_reference=[
+                SearchIndexReference(
+                    index=SearchIndexType.CROSSREF,
+                    id=doi or "",
+                ),
+            ],
         )
 
 

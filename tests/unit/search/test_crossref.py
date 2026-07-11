@@ -13,11 +13,19 @@ import pytest
 from research_agent.search.models import SearchIndexType, SearchResult
 from research_agent.search.tools import _CrossRefSearch
 
+_DEFAULT_ABSTRACT = (
+    "This paper introduces a new approach to the problem under study, "
+    "presenting a detailed methodology, a thorough experimental evaluation, "
+    "and an analysis of the results. The findings advance the state of the "
+    "art and open several directions for future work in the area."
+)
+_DEFAULT_AUTHORS: list[dict[str, str]] = [{"given": "Alice", "family": "Smith"}]
+
 
 def _make_item(  # noqa: PLR0913  # test helper mirroring CrossRef items dict shape
     *,
     title: str = "Test Paper",
-    abstract: str = "Test abstract.",
+    abstract: str = _DEFAULT_ABSTRACT,
     authors: list[dict[str, str]] | None = None,
     doi: str = "10.1234/test",
     container: str = "Test Journal",
@@ -32,7 +40,7 @@ def _make_item(  # noqa: PLR0913  # test helper mirroring CrossRef items dict sh
     return {
         "title": [title],
         "abstract": f"<p>{abstract}</p>",
-        "author": authors or [],
+        "author": authors or _DEFAULT_AUTHORS,
         "DOI": doi,
         "container-title": [container],
         "published-print": {"date-parts": [[year]]},
@@ -48,27 +56,20 @@ def _make_item(  # noqa: PLR0913  # test helper mirroring CrossRef items dict sh
 def test_to_search_result_strips_jats_from_abstract() -> None:
     item = _make_item(abstract="")
     item["abstract"] = (
-        "<jats:p>Background: <jats:italic>Important</jats:italic> findings.</jats:p>"
+        "<jats:p>Background: <jats:italic>Important</jats:italic> findings "
+        "are presented in this paper, introducing a new approach to the "
+        "problem under study, presenting a detailed methodology with a "
+        "thorough experimental evaluation, and an analysis of the results "
+        "that advance the state of the art.</jats:p>"
     )
     sr = _CrossRefSearch._to_search_result(item)
     assert isinstance(sr, SearchResult)
-    assert sr.paper.abstract == "Background: Important findings."
-
-
-def test_to_search_result_handles_missing_title() -> None:
-    item = _make_item(title="")
-    item["title"] = []
-    sr = _CrossRefSearch._to_search_result(item)
-    assert isinstance(sr, SearchResult)
-    assert sr.paper.title is None
-
-
-def test_to_search_result_handles_missing_abstract() -> None:
-    item = _make_item(abstract="")
-    item["abstract"] = ""
-    sr = _CrossRefSearch._to_search_result(item)
-    assert isinstance(sr, SearchResult)
-    assert sr.paper.abstract is None
+    assert sr.paper.abstract == (
+        "Background: Important findings are presented in this paper, "
+        "introducing a new approach to the problem under study, presenting "
+        "a detailed methodology with a thorough experimental evaluation, "
+        "and an analysis of the results that advance the state of the art."
+    )
 
 
 def test_to_search_result_falls_back_on_published_online() -> None:
@@ -105,8 +106,8 @@ def test_to_search_result_stores_raw_metadata() -> None:
 
 def test_to_search_result_index_is_crossref() -> None:
     sr = _CrossRefSearch._to_search_result(_make_item(doi="10.9999/xyz"))
-    assert sr.search_reference.index == SearchIndexType.CROSSREF
-    assert sr.search_reference.id == "10.9999/xyz"
+    assert sr.search_index_reference[0].index == SearchIndexType.CROSSREF
+    assert sr.search_index_reference[0].id == "10.9999/xyz"
     assert sr.paper.source.doi == "10.9999/xyz"
 
 
@@ -123,3 +124,22 @@ def test_to_search_result_raises_when_no_url_or_doi() -> None:
     item["DOI"] = ""
     with pytest.raises(ValueError, match="CrossRef"):
         _CrossRefSearch._to_search_result(item)
+
+
+def test_to_search_result_coerces_empty_doi_to_none() -> None:
+    item = _make_item(doi="")
+    sr = _CrossRefSearch._to_search_result(item)
+    assert sr.paper.source.doi is None
+
+
+def test_to_search_result_coerces_empty_metadata_to_none() -> None:
+    item = _make_item(issn=[])
+    item["type"] = ""
+    item["publisher"] = ""
+    item["container-title"] = [""]
+    sr = _CrossRefSearch._to_search_result(item)
+    assert sr.paper.raw_metadata is not None
+    assert sr.paper.raw_metadata["type"] is None
+    assert sr.paper.raw_metadata["publisher"] is None
+    assert sr.paper.raw_metadata["venue"] is None
+    assert sr.paper.raw_metadata["issn"] is None

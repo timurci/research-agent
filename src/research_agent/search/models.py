@@ -1,14 +1,20 @@
-"""Domain models for the research agent.
+"""Domain models for search.
 
-These models carry business meaning and are implemented as Pydantic models
-for input/output contract validation. They do not enforce domain invariants
-beyond structural validity.
+Layer: Domain.
 """
 
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+
+
+class MissingOpenAccessPDFError(Exception):
+    """Raised when a paper is open access but does not have a PDF URL."""
+
+    def __init__(self) -> None:
+        """Initialize the exception with a default message."""
+        super().__init__("Missing PDF URL for open access paper")
 
 
 class SearchIndexType(StrEnum):
@@ -23,6 +29,8 @@ class SearchIndexType(StrEnum):
 class SearchIndexReference(BaseModel):
     """A paper's identifier within a specific search index."""
 
+    model_config = ConfigDict(frozen=True)
+
     index: SearchIndexType
     id: str = Field(..., description="Identifier of the paper within the search index")
 
@@ -30,29 +38,42 @@ class SearchIndexReference(BaseModel):
 class PaperSource(BaseModel):
     """How a paper is identified and located in the literature."""
 
+    model_config = ConfigDict(frozen=True)
+
     url: HttpUrl = Field(..., description="URL of the paper")
+    open_access: bool = Field(..., description="Whether the paper is open access")
     doi: str | None = Field(None, description="Cross-index standard DOI identifier")
     pdf_url: HttpUrl | None = Field(None, description="URL of the paper's PDF")
+
+    @model_validator(mode="after")
+    def _check_open_access_has_pdf(self) -> PaperSource:
+        if self.open_access and self.pdf_url is None:
+            raise MissingOpenAccessPDFError
+        return self
 
 
 class PaperInfo(BaseModel):
     """Information about a paper, including its source and metadata."""
 
+    model_config = ConfigDict(frozen=True)
+
     source: PaperSource
 
-    title: str | None = None
-    abstract: str | None = None
+    title: str = Field(..., min_length=10, description="Title of the paper")
+    abstract: str = Field(..., min_length=200, description="Abstract of the paper")
 
-    authors: list[str]
+    authors: list[str] = Field(..., min_length=1, description="Authors of the paper")
+
     publication_year: int | None = None
     citation_count: int | None = None
-    is_open_access: bool | None = None
 
     raw_metadata: dict[str, Any] | None = None
 
 
 class ResearchQuery(BaseModel):
     """A free-text research question, optionally scoped to domains."""
+
+    model_config = ConfigDict(frozen=True)
 
     text: str = Field(min_length=5)
     domains: list[str] | None = None
@@ -61,5 +82,7 @@ class ResearchQuery(BaseModel):
 class SearchResult(BaseModel):
     """A unified search result returned by a search index tool."""
 
+    model_config = ConfigDict(frozen=True)
+
     paper: PaperInfo
-    search_reference: SearchIndexReference
+    search_index_reference: list[SearchIndexReference] = Field(..., min_length=1)

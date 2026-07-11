@@ -27,6 +27,13 @@ from research_agent.search.tools import (
     _SemanticScholarSearch,
 )
 
+_ABSTRACT = (
+    "An abstract that introduces a new approach to the problem under study, "
+    "presenting a detailed methodology, a thorough experimental evaluation, "
+    "and an analysis of the results. The findings advance the state of the art."
+)
+_TITLE = "Call Path Paper Title Long Enough"
+
 
 def _noop_init(_self: object, **_kwargs: object) -> None:
     """Stand-in for ``Crossref.__init__`` that records nothing."""
@@ -47,7 +54,7 @@ async def test_arxiv_call_runs_through_run_async(
 
     assert len(out) == 1
     assert isinstance(out[0], SearchResult)
-    assert out[0].search_reference.id == result.entry_id
+    assert out[0].search_index_reference[0].id == result.entry_id
 
 
 @pytest.mark.asyncio
@@ -69,7 +76,7 @@ async def test_pubmed_call_runs_through_run_async(
 
     assert len(out) == 1
     assert isinstance(out[0], SearchResult)
-    assert out[0].search_reference.id == "12345"
+    assert out[0].search_index_reference[0].id == "12345"
 
 
 @pytest.mark.asyncio
@@ -103,7 +110,7 @@ async def test_crossref_call_runs_through_run_async(
 
     assert len(out) == 1
     assert isinstance(out[0], SearchResult)
-    assert out[0].search_reference.id == "10.1234/test"
+    assert out[0].search_index_reference[0].id == "10.1234/test"
 
 
 @pytest.mark.asyncio
@@ -125,21 +132,156 @@ async def test_semantic_scholar_call_with_async_client() -> None:
     tool = _SemanticScholarSearch()
     tool._client.search_paper = AsyncMock(  # type: ignore[method-assign]
         return_value=_StubSearchResults(
-            [Paper({"paperId": "p1", "title": "T", "authors": [], "url": "http://x"})]
+            [
+                Paper(
+                    {
+                        "paperId": "p1",
+                        "title": _TITLE,
+                        "abstract": _ABSTRACT,
+                        "authors": [{"name": "Alice"}],
+                        "url": "http://x",
+                    }
+                )
+            ]
         )
     )
 
     out = await tool("q", limit=5)
 
     assert len(out) == 1
-    assert out[0].search_reference.id == "p1"
+    assert out[0].search_index_reference[0].id == "p1"
+
+
+@pytest.mark.asyncio
+async def test_semantic_scholar_call_drops_records_missing_title_or_abstract() -> None:
+    tool = _SemanticScholarSearch()
+    tool._client.search_paper = AsyncMock(  # type: ignore[method-assign]
+        return_value=_StubSearchResults(
+            [
+                Paper(
+                    {
+                        "paperId": "missing",
+                        "title": None,
+                        "abstract": None,
+                        "authors": [{"name": "Alice"}],
+                        "url": "http://x",
+                    }
+                ),
+                Paper(
+                    {
+                        "paperId": "kept",
+                        "title": _TITLE,
+                        "abstract": _ABSTRACT,
+                        "authors": [{"name": "Alice"}],
+                        "url": "http://x",
+                    }
+                ),
+            ]
+        )
+    )
+
+    out = await tool("q", limit=5)
+
+    assert len(out) == 1
+    assert out[0].search_index_reference[0].id == "kept"
+
+
+@pytest.mark.asyncio
+async def test_arxiv_call_drops_records_missing_title_or_abstract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad = arxiv.Result(
+        entry_id="http://arxiv.org/abs/bad",
+        title="",
+        summary="",
+        authors=[arxiv.Result.Author(name="Alice")],
+        doi="",
+        categories=[],
+        primary_category="",
+        journal_ref="",
+        comment="",
+        links=[],
+        published=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    good = _make_arxiv_result()
+    fake_client = MagicMock()
+    fake_client.results.return_value = iter([bad, good])
+    monkeypatch.setattr(arxiv, "Client", lambda **_kwargs: fake_client)
+    monkeypatch.setattr(arxiv, "Search", lambda **_kwargs: object())
+
+    tool = _ArXivSearch()
+    out = await tool("q", limit=5)
+
+    assert len(out) == 1
+    assert out[0].search_index_reference[0].id == good.entry_id
+
+
+@pytest.mark.asyncio
+async def test_pubmed_call_drops_records_missing_title_or_abstract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    good = _make_pubmed_article()
+    bad_article = {
+        "MedlineCitation": {
+            "PMID": "00000",
+            "Article": {
+                "ArticleTitle": "",
+                "Abstract": {"AbstractText": [""]},
+                "AuthorList": [{"LastName": "Doe", "ForeName": "Jane"}],
+                "Journal": {
+                    "Title": "Journal",
+                    "JournalIssue": {"PubDate": {"Year": "2020"}},
+                },
+                "ELocationID": [],
+                "PublicationTypeList": [],
+            },
+        },
+    }
+    responses = iter(
+        [
+            {"IdList": ["00000", "12345"]},
+            {"PubmedArticle": [bad_article, good]},
+        ]
+    )
+    monkeypatch.setattr(
+        Entrez, "esearch", lambda **_kwargs: MagicMock(close=MagicMock())
+    )
+    monkeypatch.setattr(
+        Entrez, "efetch", lambda **_kwargs: MagicMock(close=MagicMock())
+    )
+    monkeypatch.setattr(Entrez, "read", lambda _handle: next(responses))
+
+    tool = _PubMedSearch()
+    out = await tool("cancer", limit=5)
+
+    assert len(out) == 1
+    assert out[0].search_index_reference[0].id == "12345"
+
+
+@pytest.mark.asyncio
+async def test_crossref_call_drops_records_missing_title_or_abstract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad_item = _make_crossref_item()
+    bad_item["title"] = []
+    bad_item["abstract"] = ""
+    good = _make_crossref_item()
+    fake_response = {"message": {"items": [bad_item, good]}}
+    monkeypatch.setattr(Crossref, "__init__", _noop_init)
+    monkeypatch.setattr(Crossref, "works", lambda _self, **_kwargs: fake_response)
+
+    tool = _CrossRefSearch()
+    out = await tool("q", limit=5)
+
+    assert len(out) == 1
+    assert out[0].search_index_reference[0].id == good["DOI"]
 
 
 def _make_arxiv_result() -> arxiv.Result:
     return arxiv.Result(
         entry_id="http://arxiv.org/abs/2306.04338v1",
-        title="ArXiv Paper",
-        summary="Abstract.",
+        title=_TITLE,
+        summary=_ABSTRACT,
         authors=[arxiv.Result.Author(name="Alice")],
         doi="10.1234/arxiv",
         categories=["cs.AI"],
@@ -156,8 +298,8 @@ def _make_pubmed_article() -> dict[str, Any]:
         "MedlineCitation": {
             "PMID": "12345",
             "Article": {
-                "ArticleTitle": "Pubmed Paper",
-                "Abstract": {"AbstractText": ["Abstract."]},
+                "ArticleTitle": _TITLE,
+                "Abstract": {"AbstractText": [_ABSTRACT]},
                 "AuthorList": [{"LastName": "Doe", "ForeName": "Jane"}],
                 "Journal": {
                     "Title": "Journal",
@@ -181,8 +323,8 @@ class _MockEId:
 
 def _make_crossref_item() -> dict[str, Any]:
     return {
-        "title": ["Crossref Paper"],
-        "abstract": "<jats:p>Abstract.</jats:p>",
+        "title": [_TITLE],
+        "abstract": f"<jats:p>{_ABSTRACT}</jats:p>",
         "author": [{"given": "Alice", "family": "Smith"}],
         "DOI": "10.1234/test",
         "container-title": ["Journal"],

@@ -18,7 +18,7 @@ MEDIUM_RELEVANCE_THRESHOLD = 0.3
 HIGH_RELEVANCE_SCORE = 1.0
 MEDIUM_RELEVANCE_SCORE = 0.5
 
-SEARCH_TOOL_NAME = "search_literature"
+SEARCH_TOOL_NAME = "LiteratureSearch"
 
 
 class RelevanceMetric(BaseModel):

@@ -19,7 +19,6 @@ class MissingOpenAccessPDFError(Exception):
 class SearchIndexType(StrEnum):
     """Identifies which search result originated from."""
 
-    SEMANTIC_SCHOLAR = "semantic_scholar"
     ARXIV = "arxiv"
     PUBMED = "pubmed"
     CROSSREF = "crossref"

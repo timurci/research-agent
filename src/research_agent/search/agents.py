@@ -30,17 +30,16 @@ class SearchAgentSignature(dspy.Signature):
 
 
 def get_search_agent(
-    *, s2_api_key: str | None = None, pubmed_api_key: str | None = None
+    *, pubmed_api_key: str | None = None
 ) -> Agent[ResearchQuery, list[SearchResult]]:
     """Create a search agent instance.
 
     Args:
-        s2_api_key: Semantic Scholar API key.
         pubmed_api_key: PubMed API key.
     """
     return dspy.ReAct(
         SearchAgentSignature,
-        tools=[LiteratureSearch(s2_api_key=s2_api_key, pubmed_api_key=pubmed_api_key)],
+        tools=[LiteratureSearch(pubmed_api_key=pubmed_api_key)],
     )
 
 
@@ -50,14 +49,12 @@ class SearchAgent(Agent[ResearchQuery, list[SearchResult]]):
     def __init__(
         self,
         lm_config: LMConfig,
-        s2_api_key: str | None = None,
         pubmed_api_key: str | None = None,
     ) -> None:
         """Initialize the search agent.
 
         Args:
             lm_config: The language model to use.
-            s2_api_key: Semantic Scholar API key.
             pubmed_api_key: PubMed API key.
         """
         self._lm = dspy.LM(
@@ -67,9 +64,7 @@ class SearchAgent(Agent[ResearchQuery, list[SearchResult]]):
         )
         self._program = dspy.ReAct(
             SearchAgentSignature,
-            tools=[
-                LiteratureSearch(s2_api_key=s2_api_key, pubmed_api_key=pubmed_api_key)
-            ],
+            tools=[LiteratureSearch(pubmed_api_key=pubmed_api_key)],
         )
 
     async def __call__(self, data: ResearchQuery) -> list[SearchResult]:

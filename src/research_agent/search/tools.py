@@ -2,12 +2,11 @@
 
 Layer: Infrastructure.
 
-Wraps synchronous SDKs for arXiv, PubMed/NCBI, and CrossRef (plus the
-existing async Semantic Scholar client) and normalises every response
-into the domain ``SearchResult`` shape.  ``LiteratureSearch`` is the
-public surface: it is a single async callable that dispatches to one of
-four private per-index handlers (``_SemanticScholarSearch``,
-``_ArXivSearch``, ``_PubMedSearch``, ``_CrossRefSearch``) based on the
+Wraps synchronous SDKs for arXiv, PubMed/NCBI, and CrossRef and
+normalises every response into the domain ``SearchResult`` shape.
+``LiteratureSearch`` is the public surface: it is a single async
+callable that dispatches to one of three private per-index handlers
+(``_ArXivSearch``, ``_PubMedSearch``, ``_CrossRefSearch``) based on the
 requested ``SearchIndexType``.  The private handlers carry the
 index-specific implementation; ``LiteratureSearch`` is what the search
 node wraps in ``dspy.Tool`` and exposes to the agent.
@@ -22,8 +21,6 @@ import arxiv
 from Bio import Entrez
 from habanero import Crossref
 from pydantic import HttpUrl
-from semanticscholar.AsyncSemanticScholar import AsyncSemanticScholar
-from semanticscholar.Paper import Paper
 
 from research_agent.search.models import (
     PaperInfo,
@@ -34,18 +31,6 @@ from research_agent.search.models import (
 )
 from research_agent.shared.executor import run_async
 
-_FIELDS: list[str] = [
-    "paperId",
-    "title",
-    "abstract",
-    "authors",
-    "year",
-    "citationCount",
-    "externalIds",
-    "openAccessPdf",
-    "url",
-    "isOpenAccess",
-]
 _MAX_LIMIT: int = 100
 _MIN_LIMIT: int = 1
 
@@ -69,86 +54,6 @@ def _require_url(value: str | None, *, context: str) -> str:
         msg = f"{context}: cannot normalise record without a URL"
         raise ValueError(msg)
     return value
-
-
-class _SemanticScholarSearch:
-    """Search Semantic Scholar for academic papers matching a free-text query.
-
-    Returns paper metadata including title, abstract, authors, year, venue,
-    citation count, and open-access PDF link when available.
-    """
-
-    _client: AsyncSemanticScholar
-
-    def __init__(self, *, api_key: str | None = None, timeout: int = 30) -> None:
-        """Initialise the search tool with an async Semantic Scholar client.
-
-        Args:
-            api_key: Optional Semantic Scholar API key. Unauthenticated
-                traffic shares a global 1,000 req/s pool; an authenticated
-                key raises the per-IP rate to 1 req/s intro (more on
-                request).
-            timeout: Per-request timeout in seconds. Defaults to 30.
-        """
-        if api_key is None:
-            self._client = AsyncSemanticScholar(timeout=timeout)
-        else:
-            self._client = AsyncSemanticScholar(api_key=api_key, timeout=timeout)
-
-    async def __call__(self, query: str, *, limit: int) -> list[SearchResult]:
-        """Search Semantic Scholar for papers matching a free-text query.
-
-        Args:
-            query: Plain-text search query.
-            limit: Maximum number of results to return. Clamped to the
-                Semantic Scholar API range of [1, 100].
-
-        Returns:
-            A list of normalised ``SearchResult`` objects, one per matched
-            paper. May be shorter than *limit* (or empty) when the API
-            returns fewer matches, or when matched records lack a title
-            or abstract (silently dropped here).
-        """
-        clamped = max(_MIN_LIMIT, min(limit, _MAX_LIMIT))
-        results = await self._client.search_paper(query, fields=_FIELDS, limit=clamped)
-        if isinstance(results, Paper):
-            papers: list[Paper] = [results]
-        else:
-            papers = list(results.items)
-        papers = [
-            p for p in papers if (p.title or "").strip() and (p.abstract or "").strip()
-        ]
-        return [self._to_search_result(p) for p in papers]
-
-    def _to_search_result(self, paper: Paper) -> SearchResult:
-        external = paper.externalIds or {}
-        pdf = paper.openAccessPdf or {}
-        url = paper.url or f"https://www.semanticscholar.org/paper/{paper.paperId}"
-        pdf_url = HttpUrl(pdf["url"]) if pdf.get("url") else None
-        title = (paper.title or "").strip()
-        abstract = (paper.abstract or "").strip()
-        doi = external.get("DOI") or None
-        return SearchResult(
-            paper=PaperInfo(
-                source=PaperSource(
-                    url=HttpUrl(_require_url(url, context="Semantic Scholar")),
-                    open_access=bool(paper.isOpenAccess) and pdf_url is not None,
-                    doi=doi,
-                    pdf_url=pdf_url,
-                ),
-                title=title,
-                abstract=abstract,
-                authors=tuple(a.name for a in (paper.authors or []) if a.name),
-                publication_year=paper.year,
-                citation_count=paper.citationCount,
-            ),
-            search_index_reference=(
-                SearchIndexReference(
-                    index=SearchIndexType.SEMANTIC_SCHOLAR,
-                    id=paper.paperId,
-                ),
-            ),
-        )
 
 
 class _ArXivSearch:
@@ -493,7 +398,7 @@ class _CrossRefSearch:
 
 
 class LiteratureSearch:
-    """Unified literature search that dispatches to one of four private index handlers.
+    """Unified literature search that dispatches to one of three private index handlers.
 
     The single async callable the search node wraps in ``dspy.Tool`` and
     exposes to the agent.  The agent picks the index per call via
@@ -508,25 +413,16 @@ class LiteratureSearch:
     def __init__(
         self,
         *,
-        s2_api_key: str | None = None,
         pubmed_api_key: str | None = None,
     ) -> None:
         """Initialise the unified search tool and its private index handlers.
 
         Args:
-            s2_api_key: Optional Semantic Scholar API key forwarded to
-                the private Semantic Scholar handler.  Unauthenticated
-                traffic shares a global 1,000 req/s pool; an
-                authenticated key is recommended for any non-interactive
-                use.
             pubmed_api_key: Optional NCBI API key forwarded to the
                 private PubMed handler for elevated rate limits
                 (10 req/s vs ~3 req/s unauthenticated).
         """
         self._handlers: dict[SearchIndexType, _IndexSearch] = {
-            SearchIndexType.SEMANTIC_SCHOLAR: _SemanticScholarSearch(
-                api_key=s2_api_key,
-            ),
             SearchIndexType.ARXIV: _ArXivSearch(),
             SearchIndexType.PUBMED: _PubMedSearch(api_key=pubmed_api_key),
             SearchIndexType.CROSSREF: _CrossRefSearch(),
@@ -543,8 +439,7 @@ class LiteratureSearch:
 
         Args:
             search_index: Which index to query.  One of the
-                ``SearchIndexType`` enum values (Semantic Scholar, arXiv,
-                PubMed, CrossRef).
+                ``SearchIndexType`` enum values (arXiv, PubMed, CrossRef).
             query: Plain-text search query.  Query syntax is delegated to
                 the chosen index's handler.
             limit: Maximum number of results to return.  Required; each
@@ -567,7 +462,7 @@ class LiteratureSearch:
 
 
 class _IndexSearch(Protocol):
-    """Structural shape satisfied by the four private index handlers.
+    """Structural shape satisfied by the three private index handlers.
 
     Local to this module and not exported.  ``LiteratureSearch`` only
     relies on the ``async __call__(query, *, limit) -> list[SearchResult]``

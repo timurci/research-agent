@@ -11,7 +11,7 @@ A research assistant for scientific literature discovery. The current capability
 - Python ≥ 3.14
 - `pydantic` ≥ 2.13.4 — domain models, I/O contract validation, and invariant enforcement
 - `dspy` ≥ 3.2.1 — LLM infrastructure (signatures, programs, optimizers, embeddings via LiteLLM)
-- `arxiv`, `biopython`, `habanero`, `semanticscholar` — search-index clients
+- `arxiv`, `biopython`, `habanero` — search-index clients
 - `uv` — package manager, runner, and build backend (`uv_build`)
 - `ruff` — lint + format (`ruff.toml`: `select = ["ALL"]`, Google docstrings, ignore `COM812`)
 - `ty` — type checker
@@ -32,9 +32,9 @@ Manage all dependencies through `uv`; do not use `pip` directly.
 A change is complete when all of the following pass:
 
 ```bash
-uv run ruff check --fix src/
-uv run ruff format src/
-uv run ty check src/
+uv run ruff check --fix src/ tests/
+uv run ruff format src/ tests/
+uv run ty check src/ tests/
 uv run pytest
 ```
 

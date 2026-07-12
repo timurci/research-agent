@@ -1,11 +1,6 @@
 """Application workflows for the search slice.
 
 Layer: Application.
-
-Workflows are thin orchestrators that compose ``Agent`` ports. They
-hold no business logic, never import DSPy or LiteLLM, and never depend
-on a specific adapter — production wires concrete adapters at the
-composition root, tests wire in-memory fakes.
 """
 
 from __future__ import annotations
@@ -36,7 +31,7 @@ class PaperSearchWorkflow:
         self._rerank = reranker
 
     async def __call__(self, query: ResearchQuery) -> list[SearchResult]:
-        """Search for papers in the literature for the given query.
+        """Run search and reranking for the given query.
 
         Args:
             query: The research question to search for.

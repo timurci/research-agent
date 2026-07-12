@@ -16,6 +16,8 @@ from .models import ResearchQuery, SearchResult
 if TYPE_CHECKING:
     from research_agent.shared.agent import LMConfig
 
+_MAX_REACT_ITERS: int = 3
+
 
 class _RelevanceScore(TypedDict):
     index: int
@@ -40,6 +42,7 @@ def get_search_agent(
     return dspy.ReAct(
         SearchAgentSignature,
         tools=[LiteratureSearch(pubmed_api_key=pubmed_api_key)],
+        max_iters=_MAX_REACT_ITERS,
     )
 
 
@@ -65,6 +68,7 @@ class SearchAgent(Agent[ResearchQuery, list[SearchResult]]):
         self._program = dspy.ReAct(
             SearchAgentSignature,
             tools=[LiteratureSearch(pubmed_api_key=pubmed_api_key)],
+            max_iters=_MAX_REACT_ITERS,
         )
 
     async def __call__(self, data: ResearchQuery) -> list[SearchResult]:

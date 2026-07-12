@@ -124,6 +124,7 @@ Application methods and the ports they call are `async`. Synchronous, blocking w
 - Do not commit files under `data/**/output/` other than `.gitkeep`.
 - Do not add `Request`/`Result`-style domain models that bundle existing domain objects without adding meaning. The domain takes inputs separately; infrastructure bundles them in DSPy signatures.
 - Do not bound the `Agent` port's type variables; the output type may be a container of models.
+- Do not re-validate structure that Pydantic already enforces at construction.
 
 ## Known gotchas
 

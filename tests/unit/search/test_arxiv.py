@@ -74,31 +74,6 @@ def test_to_search_result_handles_missing_doi() -> None:
     assert sr.paper.source.doi is None
 
 
-def test_to_search_result_uses_journal_ref_as_venue() -> None:
-    sr = _ArXivSearch()._to_search_result(
-        _make_result(
-            journal_ref="Nature 2020",
-            authors=[arxiv.Result.Author(name="Alice")],
-        )
-    )
-    assert isinstance(sr, SearchResult)
-    assert sr.paper.raw_metadata is not None
-    assert sr.paper.raw_metadata["venue"] == "Nature 2020"
-
-
-def test_to_search_result_falls_back_to_comment_when_no_journal_ref() -> None:
-    sr = _ArXivSearch()._to_search_result(
-        _make_result(
-            journal_ref="",
-            comment="Accepted at NeurIPS",
-            authors=[arxiv.Result.Author(name="Alice")],
-        )
-    )
-    assert isinstance(sr, SearchResult)
-    assert sr.paper.raw_metadata is not None
-    assert sr.paper.raw_metadata["venue"] == "Accepted at NeurIPS"
-
-
 def test_to_search_result_extracts_pdf_from_links_when_no_pdf_url() -> None:
     result = _make_result(
         pdf_link=None,
@@ -145,7 +120,7 @@ def test_to_search_result_filters_none_author_names() -> None:
         )
     )
     assert isinstance(sr, SearchResult)
-    assert sr.paper.authors == ["Alice", "Bob"]
+    assert list(sr.paper.authors) == ["Alice", "Bob"]
 
 
 def test_to_search_result_index_is_arxiv() -> None:
@@ -163,17 +138,3 @@ def test_to_search_result_coerces_empty_doi_to_none() -> None:
         )
     )
     assert sr.paper.source.doi is None
-
-
-def test_to_search_result_coerces_empty_metadata_strings_to_none() -> None:
-    sr = _ArXivSearch()._to_search_result(
-        _make_result(
-            authors=[arxiv.Result.Author(name="Alice")],
-            journal_ref="",
-            comment="",
-        )
-    )
-    assert sr.paper.raw_metadata is not None
-    assert sr.paper.raw_metadata["primary_category"] is None
-    assert sr.paper.raw_metadata["comment"] is None
-    assert sr.paper.raw_metadata["journal_ref"] is None

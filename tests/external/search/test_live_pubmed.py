@@ -33,7 +33,5 @@ async def test_search_finds_brca1_papers() -> None:
     assert sample.paper.title is not None
     assert len(sample.paper.title) > 10
     assert len(sample.paper.authors) > 0
-    assert sample.paper.raw_metadata is not None
-    assert sample.paper.raw_metadata.get("venue") is not None
     assert sample.paper.source.url is not None
     assert "pubmed.ncbi.nlm.nih.gov" in str(sample.paper.source.url)

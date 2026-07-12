@@ -45,6 +45,9 @@ def search_result_relevance(
         )
         raise ValueError(error_msg)
 
+    if not search_results:
+        return EvaluationScore(passing=False, reason="Empty input", score=0.0)
+
     counter = Counter()
     low_relevance_items: list[int] = []
     high_relevance_items: list[int] = []
@@ -102,7 +105,7 @@ def search_result_non_hallucination(
         for result in call.observation
     }
 
-    hallucinated_papers = tool_papers - agent_papers
+    hallucinated_papers = agent_papers - tool_papers
 
     if len(hallucinated_papers) > 0:
         titles = "\n".join([p.title for p in hallucinated_papers])
@@ -117,8 +120,8 @@ def search_result_non_hallucination(
 def search_result_non_duplicate(search_results: list[SearchResult]) -> EvaluationScore:
     """Evaluates whether there are any duplicate search results based on title."""
     title_counter = Counter()
-    for title in search_results:
-        title_counter[title] += 1
+    for result in search_results:
+        title_counter[result.paper.title] += 1
     duplicated_titles = [title for title, count in title_counter.items() if count > 1]
     if duplicated_titles:
         reason = (

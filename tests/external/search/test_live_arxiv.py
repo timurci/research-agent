@@ -38,4 +38,4 @@ async def test_search_finds_bert_paper() -> None:
     assert "BERT" in sample.paper.title
     authors = sample.paper.authors
     assert any("Devlin" in a for a in authors), f"Authors: {authors}"
-    assert sample.paper.is_open_access is True
+    assert sample.paper.source.open_access is True

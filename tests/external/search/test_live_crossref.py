@@ -32,4 +32,4 @@ async def test_search_finds_results() -> None:
     for sample in results:
         assert sample.paper.title is not None
         assert sample.paper.source.doi is not None
-        assert sample.search_reference.index == SearchIndexType.CROSSREF
+        assert sample.search_index_reference[0].index == SearchIndexType.CROSSREF

@@ -127,22 +127,16 @@ class _SemanticScholarSearch:
                 ),
                 title=title,
                 abstract=abstract,
-                authors=[a.name for a in (paper.authors or []) if a.name],
+                authors=tuple(a.name for a in (paper.authors or []) if a.name),
                 publication_year=paper.year,
                 citation_count=paper.citationCount,
-                raw_metadata={
-                    **(paper.raw_data or {}),
-                    "venue": paper.venue or None,
-                    "fields_of_study": paper.fieldsOfStudy or None,
-                    "tldr": (paper.tldr.text.strip() or None) if paper.tldr else None,
-                },
             ),
-            search_index_reference=[
+            search_index_reference=(
                 SearchIndexReference(
                     index=SearchIndexType.SEMANTIC_SCHOLAR,
                     id=paper.paperId,
                 ),
-            ],
+            ),
         )
 
 
@@ -222,28 +216,20 @@ class _ArXivSearch:
                 ),
                 title=title,
                 abstract=summary,
-                authors=[a.name for a in (result.authors or []) if a.name],
+                authors=tuple(a.name for a in (result.authors or []) if a.name),
                 publication_year=(
                     result.published.year
                     if result.published and result.published.year > 1
                     else None
                 ),
                 citation_count=None,
-                raw_metadata={
-                    "venue": result.journal_ref or result.comment or None,
-                    "topics": list(result.categories) if result.categories else None,
-                    "primary_category": result.primary_category or None,
-                    "comment": result.comment or None,
-                    "journal_ref": result.journal_ref or None,
-                    "updated": result.updated.isoformat() if result.updated else None,
-                },
             ),
-            search_index_reference=[
+            search_index_reference=(
                 SearchIndexReference(
                     index=SearchIndexType.ARXIV,
                     id=result.entry_id,
                 ),
-            ],
+            ),
         )
 
 
@@ -346,7 +332,6 @@ class _PubMedSearch:
                 authors.append(f"{fore} {last}".strip())
 
         journal = art.get("Journal", {})
-        venue = str(journal.get("Title", ""))
         pub_date = journal.get("JournalIssue", {}).get("PubDate", {})
         year_raw = pub_date.get("Year", "")
         publication_year = int(year_raw) if year_raw else None
@@ -372,24 +357,16 @@ class _PubMedSearch:
                 ),
                 title=title,
                 abstract=abstract,
-                authors=authors,
+                authors=tuple(authors),
                 publication_year=publication_year,
                 citation_count=None,
-                raw_metadata={
-                    "venue": venue or None,
-                    "pmid": pmid,
-                    "publication_types": [
-                        str(p) for p in art.get("PublicationTypeList", [])
-                    ]
-                    or None,
-                },
             ),
-            search_index_reference=[
+            search_index_reference=(
                 SearchIndexReference(
                     index=SearchIndexType.PUBMED,
                     id=pmid,
                 ),
-            ],
+            ),
         )
 
 
@@ -465,9 +442,6 @@ class _CrossRefSearch:
         doi = item.get("DOI") or None
         url = item.get("URL") or (f"https://doi.org/{doi}" if doi else "")
 
-        container = item.get("container-title", [])
-        venue = (container[0] if container else "") or None
-
         pub = (
             item.get("published-print")
             or item.get("published-online")
@@ -494,22 +468,16 @@ class _CrossRefSearch:
                 ),
                 title=title,
                 abstract=abstract,
-                authors=authors,
+                authors=tuple(authors),
                 publication_year=publication_year,
                 citation_count=item.get("is-referenced-by-count"),
-                raw_metadata={
-                    "venue": venue,
-                    "type": item.get("type") or None,
-                    "publisher": item.get("publisher") or None,
-                    "issn": item.get("ISSN") or None,
-                },
             ),
-            search_index_reference=[
+            search_index_reference=(
                 SearchIndexReference(
                     index=SearchIndexType.CROSSREF,
                     id=doi or "",
                 ),
-            ],
+            ),
         )
 
 

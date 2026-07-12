@@ -46,15 +46,11 @@ def test_to_search_result_constructs_search_result() -> None:
     assert result.search_index_reference[0].id == "abc123"
     assert result.paper.title == _TITLE
     assert result.paper.abstract == _ABSTRACT
-    assert result.paper.authors == ["Alice", "Bob"]
+    assert list(result.paper.authors) == ["Alice", "Bob"]
     assert result.paper.citation_count == 10
     assert result.paper.source.open_access is True
     assert str(result.paper.source.pdf_url) == "http://example.com/paper.pdf"
     assert result.paper.source.doi == "10.1234/test"
-    assert result.paper.raw_metadata is not None
-    assert result.paper.raw_metadata["venue"] == "Test Venue"
-    assert result.paper.raw_metadata["fields_of_study"] == ["Computer Science"]
-    assert result.paper.raw_metadata["tldr"] == "TLDR here"
 
 
 def test_to_search_result_falls_back_url_when_missing() -> None:
@@ -86,54 +82,6 @@ def test_to_search_result_coerces_empty_doi_to_none() -> None:
     )
     result = _SemanticScholarSearch()._to_search_result(paper)
     assert result.paper.source.doi is None
-
-
-def test_to_search_result_coerces_empty_venue_to_none() -> None:
-    paper = Paper(
-        {
-            "paperId": "abc123",
-            "title": _TITLE,
-            "abstract": _ABSTRACT,
-            "authors": [{"name": "Alice"}],
-            "venue": "",
-            "url": "http://example.com",
-        }
-    )
-    result = _SemanticScholarSearch()._to_search_result(paper)
-    assert result.paper.raw_metadata is not None
-    assert result.paper.raw_metadata["venue"] is None
-
-
-def test_to_search_result_coerces_empty_fields_of_study_to_none() -> None:
-    paper = Paper(
-        {
-            "paperId": "abc123",
-            "title": _TITLE,
-            "abstract": _ABSTRACT,
-            "authors": [{"name": "Alice"}],
-            "fieldsOfStudy": [],
-            "url": "http://example.com",
-        }
-    )
-    result = _SemanticScholarSearch()._to_search_result(paper)
-    assert result.paper.raw_metadata is not None
-    assert result.paper.raw_metadata["fields_of_study"] is None
-
-
-def test_to_search_result_coerces_empty_tldr_text_to_none() -> None:
-    paper = Paper(
-        {
-            "paperId": "abc123",
-            "title": _TITLE,
-            "abstract": _ABSTRACT,
-            "authors": [{"name": "Alice"}],
-            "tldr": {"text": "   "},
-            "url": "http://example.com",
-        }
-    )
-    result = _SemanticScholarSearch()._to_search_result(paper)
-    assert result.paper.raw_metadata is not None
-    assert result.paper.raw_metadata["tldr"] is None
 
 
 @pytest.mark.asyncio

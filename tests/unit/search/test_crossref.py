@@ -90,20 +90,6 @@ def test_to_search_result_falls_back_on_issued() -> None:
     assert sr.paper.publication_year == 2019
 
 
-def test_to_search_result_stores_raw_metadata() -> None:
-    item = _make_item(
-        item_type="book-chapter",
-        publisher="Oxford University Press",
-        issn=["1234-5678"],
-    )
-    sr = _CrossRefSearch._to_search_result(item)
-    assert isinstance(sr, SearchResult)
-    assert sr.paper.raw_metadata is not None
-    assert sr.paper.raw_metadata["type"] == "book-chapter"
-    assert sr.paper.raw_metadata["publisher"] == "Oxford University Press"
-    assert sr.paper.raw_metadata["issn"] == ["1234-5678"]
-
-
 def test_to_search_result_index_is_crossref() -> None:
     sr = _CrossRefSearch._to_search_result(_make_item(doi="10.9999/xyz"))
     assert sr.search_index_reference[0].index == SearchIndexType.CROSSREF
@@ -130,16 +116,3 @@ def test_to_search_result_coerces_empty_doi_to_none() -> None:
     item = _make_item(doi="")
     sr = _CrossRefSearch._to_search_result(item)
     assert sr.paper.source.doi is None
-
-
-def test_to_search_result_coerces_empty_metadata_to_none() -> None:
-    item = _make_item(issn=[])
-    item["type"] = ""
-    item["publisher"] = ""
-    item["container-title"] = [""]
-    sr = _CrossRefSearch._to_search_result(item)
-    assert sr.paper.raw_metadata is not None
-    assert sr.paper.raw_metadata["type"] is None
-    assert sr.paper.raw_metadata["publisher"] is None
-    assert sr.paper.raw_metadata["venue"] is None
-    assert sr.paper.raw_metadata["issn"] is None

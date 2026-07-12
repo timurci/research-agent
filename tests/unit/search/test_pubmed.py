@@ -71,7 +71,7 @@ def test_to_search_result_handles_collective_name() -> None:
         _make_article(authors=[{"CollectiveName": "The Cancer Genome Atlas Network"}]),
     )
     assert isinstance(sr, SearchResult)
-    assert sr.paper.authors == ["The Cancer Genome Atlas Network"]
+    assert list(sr.paper.authors) == ["The Cancer Genome Atlas Network"]
 
 
 def test_to_search_result_handles_missing_year() -> None:
@@ -107,15 +107,6 @@ def test_has_title_and_abstract_rejects_missing_abstract() -> None:
     assert _PubMedSearch._has_title_and_abstract(article) is False
 
 
-def test_to_search_result_stores_publication_types() -> None:
-    sr = _PubMedSearch._to_search_result(
-        _make_article(publication_types=["Journal Article", "Review"]),
-    )
-    assert isinstance(sr, SearchResult)
-    assert sr.paper.raw_metadata is not None
-    assert sr.paper.raw_metadata["publication_types"] == ["Journal Article", "Review"]
-
-
 def test_to_search_result_index_is_pubmed() -> None:
     sr = _PubMedSearch._to_search_result(_make_article(pmid="99999"))
     assert sr.search_index_reference[0].index == SearchIndexType.PUBMED
@@ -130,12 +121,6 @@ def test_to_search_result_coerces_empty_doi_to_none() -> None:
     ]
     sr = _PubMedSearch._to_search_result(article)
     assert sr.paper.source.doi is None
-
-
-def test_to_search_result_coerces_empty_publication_types_to_none() -> None:
-    sr = _PubMedSearch._to_search_result(_make_article(publication_types=[]))
-    assert sr.paper.raw_metadata is not None
-    assert sr.paper.raw_metadata["publication_types"] is None
 
 
 class _EmptyDoiEId:

@@ -4,7 +4,6 @@ Layer: Domain.
 """
 
 from enum import StrEnum
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
@@ -62,12 +61,12 @@ class PaperInfo(BaseModel):
     title: str = Field(..., min_length=10, description="Title of the paper")
     abstract: str = Field(..., min_length=200, description="Abstract of the paper")
 
-    authors: list[str] = Field(..., min_length=1, description="Authors of the paper")
+    authors: tuple[str, ...] = Field(
+        ..., min_length=1, description="Authors of the paper"
+    )
 
     publication_year: int | None = None
     citation_count: int | None = None
-
-    raw_metadata: dict[str, Any] | None = None
 
 
 class ResearchQuery(BaseModel):
@@ -76,7 +75,7 @@ class ResearchQuery(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     text: str = Field(min_length=5)
-    domains: list[str] | None = None
+    domains: tuple[str, ...] | None = None
 
 
 class SearchResult(BaseModel):
@@ -85,4 +84,4 @@ class SearchResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     paper: PaperInfo
-    search_index_reference: list[SearchIndexReference] = Field(..., min_length=1)
+    search_index_reference: tuple[SearchIndexReference, ...] = Field(..., min_length=1)

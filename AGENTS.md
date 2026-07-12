@@ -1,16 +1,16 @@
 # AGENTS.md
 
-Operating manual for AI coding agents working in this repository. File-level rules and exact commands; the *why* behind each architectural decision is in [`docs/architecture.md`](docs/architecture.md).
+Operating manual for AI coding agents working in this repository. File-level rules and exact commands; the _why_ behind each architectural decision is in [`docs/architecture.md`](docs/architecture.md).
 
 ## Project overview
 
-A research assistant for scientific literature discovery. The current capability is the **search slice**: it takes a `ResearchQuery` and returns a `list[SearchResult]` via an LLM-backed `Agent`. The domain has no scoring or ranking stage — relevance is enforced upstream by prompt optimization. Two sibling tooling packages generate synthetic training queries (`src/datagen`) and run the DSPy optimization pipeline (`src/optimize`); neither is imported at runtime.
+A research assistant for scientific literature discovery. The current capability is the **search slice**: it takes a `ResearchQuery` and returns a `list[SearchResult]` via an LLM-backed `Agent`. The slice exposes two `Agent` ports — a search agent and a reranker — composed by the `PaperSearchWorkflow` in `search/workflows.py`. Two sibling tooling packages generate synthetic training queries (`src/datagen`) and run the DSPy optimization pipeline (`src/optimize`); neither is imported at runtime.
 
 ## Tech stack
 
 - Python ≥ 3.14
-- `pydantic` ≥ 2.13.4 — domain models, I/O contract validation, and invariant enforcement
-- `dspy` ≥ 3.2.1 — LLM infrastructure (signatures, programs, optimizers, embeddings via LiteLLM)
+- `pydantic` — domain models, I/O contract validation, and invariant enforcement
+- `dspy` — LLM infrastructure (signatures, programs, optimizers, embeddings via LiteLLM)
 - `arxiv`, `biopython`, `habanero` — search-index clients
 - `uv` — package manager, runner, and build backend (`uv_build`)
 - `ruff` — lint + format (`ruff.toml`: `select = ["ALL"]`, Google docstrings, ignore `COM812`)
@@ -48,7 +48,7 @@ prek run <hook-id>           # single hook (ruff-check, ruff-format, ty)
 
 ## Project structure
 
-Organized as **portable capability slices** under `src/research_agent/`, not physical layer folders. A slice is a self-contained folder grouping one capability's domain, application, and infrastructure files; layer membership is *virtual*, declared by each file's docstring role, not by subfolder. A slice may depend only on `research_agent.shared` and external libraries — never on a sibling slice.
+Organized as **portable capability slices** under `src/research_agent/`, not physical layer folders. A slice is a self-contained folder grouping one capability's domain, application, and infrastructure files; layer membership is _virtual_, declared by each file's docstring role, not by subfolder. A slice may depend only on `research_agent.shared` and external libraries — never on a sibling slice.
 
 ```text
 src/research_agent/              runtime shell; imports slices, wires workflows
@@ -59,7 +59,10 @@ src/research_agent/              runtime shell; imports slices, wires workflows
   search/                        THE search slice; portable
     __init__.py                  slice docstring: layer roles, dependency direction
     models.py                    [Layer: Domain] ResearchQuery, SearchResult, PaperInfo, PaperSource, SearchIndexReference, SearchIndexType
+    metrics.py                   [Layer: Domain] search-relevance, non-hallucination, non-duplicate metrics
     tools.py                     [Layer: Infrastructure] LiteratureSearch + per-index handlers
+    agents.py                    [Layer: Infrastructure] DSPy search agent + LiteLLM-backed reranker
+    workflows.py                 [Layer: Application] PaperSearchWorkflow (search → rerank composition)
     program.py                   [Layer: Infrastructure] DSPy student program (reserved)
   workflows.py                   [Layer: Application] workflow orchestration (reserved)
   api/                           [Layer: Presentation] runtime entrypoints (reserved)
@@ -90,11 +93,11 @@ Application methods and the ports they call are `async`. Synchronous, blocking w
 
 ## Domain modeling conventions
 
-- **Ubiquitous language.** A class name must say what the object *is* in domain terms; vague `Request`/`Result` pairings are forbidden. (`ResultIdentifier` was renamed to `SearchIndexReference` + `PaperSource` because "result of what, identifier of what?" had no answer.)
+- **Ubiquitous language.** A class name must say what the object _is_ in domain terms; vague `Request`/`Result` pairings are forbidden. (`ResultIdentifier` was renamed to `SearchIndexReference` + `PaperSource` because "result of what, identifier of what?" had no answer.)
 - **Pydantic encodes domain invariants.** A domain object must never exist in an inconsistent state; enforce invariants with Pydantic validators at construction, not by patching after. (e.g. `ResearchQuery.text = Field(min_length=5)`.)
 - **Group tightly-coupled fields into their own model.** A native ID is meaningless without its index, so `SearchIndexReference(index, id)` is a unit; `SearchResult` bundles `paper: PaperInfo` (with `source: PaperSource`) plus the cross-index `search_reference`.
-- **Quality metrics and LLM-judge rubrics are domain knowledge.** Define them in the domain layer as pure functions over domain value objects; the optimizer in `src/optimize` consumes them. This is a *definition*, not a runtime stage.
-- **One capability in the current workflow.** The search slice takes `ResearchQuery`, returns `list[SearchResult]`. Do not add a scoring/ranking stage, `ScoreRequest`, `ScoredResults`, or categorical relevance labels — relevance is enforced by optimization, not a downstream domain stage.
+- **Quality metrics and LLM-judge rubrics are domain knowledge.** Define them in the domain layer as pure functions over domain value objects; the optimizer in `src/optimize` consumes them. This is a _definition_, not a runtime stage.
+- **One capability in the current workflow.** The search slice exposes a single use case via the `PaperSearchWorkflow` in `search/workflows.py`: take a `ResearchQuery`, return a `list[SearchResult]`. The slice owns the search and rerank `Agent` ports; the workflow composes them. Per-result scores stay inside the reranker's adapter, not in the domain, and the slice does not expose a categorical relevance label.
 
 ## Code conventions
 
@@ -116,12 +119,10 @@ Application methods and the ports they call are `async`. Synchronous, blocking w
 ## What NOT to do
 
 - Do not import `datagen` or `optimize` from anywhere in `research_agent`.
-- Do not import DSPy, LiteLLM, or any LLM library into any Domain or Application module (`search/models.py`, the future `workflows.py`).
+- Do not import DSPy, LiteLLM, or any LLM library into any Domain or Application module.
 - Do not import between slices. A slice depends only on `research_agent.shared` and external libraries.
 - Do not commit files under `data/**/output/` other than `.gitkeep`.
 - Do not add `Request`/`Result`-style domain models that bundle existing domain objects without adding meaning. The domain takes inputs separately; infrastructure bundles them in DSPy signatures.
-- Do not add a scoring/ranking stage to the search workflow without an explicit design decision — the current design omits it on purpose.
-- Do not add code comments.
 - Do not bound the `Agent` port's type variables; the output type may be a container of models.
 
 ## Known gotchas

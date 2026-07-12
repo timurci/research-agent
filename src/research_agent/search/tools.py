@@ -34,7 +34,18 @@ from research_agent.search.models import (
 )
 from research_agent.shared.executor import run_async
 
-_FIELDS: list[str] = list(Paper.SEARCH_FIELDS)
+_FIELDS: list[str] = [
+    "paperId",
+    "title",
+    "abstract",
+    "authors",
+    "year",
+    "citationCount",
+    "externalIds",
+    "openAccessPdf",
+    "url",
+    "isOpenAccess",
+]
 _MAX_LIMIT: int = 100
 _MIN_LIMIT: int = 1
 

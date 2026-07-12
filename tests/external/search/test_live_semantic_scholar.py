@@ -18,7 +18,7 @@ import pytest
 
 from research_agent.search.tools import LiteratureSearch
 
-_TIMEOUT_SECONDS: float = 15.0
+_TIMEOUT_SECONDS: float = 60.0
 
 
 @pytest.mark.live

@@ -14,7 +14,7 @@ from research_agent.shared.agent import Agent
 from .models import ResearchQuery, SearchResult
 
 if TYPE_CHECKING:
-    from research_agent.shared.lm import LMConfig
+    from research_agent.shared.agent import LMConfig
 
 
 class _RelevanceScore(TypedDict):

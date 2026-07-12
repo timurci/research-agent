@@ -18,3 +18,7 @@ uv.lock
 # Generated data (keep directory placeholders via .gitkeep, ignore contents)
 data/**/output/*
 !data/**/output/.gitkeep
+
+# Coding agent or IDE configurations
+.opencode
+.pi

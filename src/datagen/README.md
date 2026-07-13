@@ -10,7 +10,7 @@ output is consumed by the optimization pipeline in `src/optimize/`.
 
 Generate varied `ResearchQuery` objects to use as the training set when
 optimizing the search prompt. The optimization pipeline
-runs the search capability live and scores the returned `list[SearchResult]` with an
+runs the search capability live and scores the returned `list[PaperInfo]` with an
 embedding-similarity metric (defined in `src/optimize/`), so the datagen
 package only needs to produce queries — not pre-baked result sets or labels.
 

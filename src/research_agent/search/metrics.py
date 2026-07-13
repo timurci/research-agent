@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from research_agent.shared.metric import EvaluationScore, ToolCallObservation
 
 if TYPE_CHECKING:
-    from research_agent.search.models import PaperInfo, SearchResult
+    from research_agent.search.models import PaperInfo
 
 HIGH_RELEVANCE_THRESHOLD = 0.7
 MEDIUM_RELEVANCE_THRESHOLD = 0.3
@@ -30,7 +30,7 @@ class RelevanceMetric(BaseModel):
 
 
 def search_result_relevance(
-    search_results: list[SearchResult], relevance_scores: list[RelevanceMetric]
+    search_results: list[PaperInfo], relevance_scores: list[RelevanceMetric]
 ) -> EvaluationScore:
     """Determines if a paper is relevant to the research topic.
 
@@ -78,10 +78,8 @@ def search_result_relevance(
         passing = True
         verdict = "Results are within acceptable bounds."
 
-    low_relevance_titles = [search_results[i].paper.title for i in low_relevance_items]
-    high_relevance_titles = [
-        search_results[i].paper.title for i in high_relevance_items
-    ]
+    low_relevance_titles = [search_results[i].title for i in low_relevance_items]
+    high_relevance_titles = [search_results[i].title for i in high_relevance_items]
 
     reason = (
         f"Verdict\n{verdict}"
@@ -93,13 +91,19 @@ def search_result_relevance(
 
 
 def search_result_non_hallucination(
-    search_results: list[SearchResult],
-    tool_calls: list[ToolCallObservation[list[SearchResult]]],
+    search_results: list[PaperInfo],
+    tool_calls: list[ToolCallObservation[list[PaperInfo]]],
 ) -> EvaluationScore:
-    """Evaluates whether the search results are hallucinated based on the tool calls."""
-    agent_papers: set[PaperInfo] = {result.paper for result in search_results}
+    """Evaluate whether search results are present in tool observations.
+
+    Observation entries must be plain ``PaperInfo`` values. Callers that
+    collect ReAct traces must unwrap any index-tagged tool observation
+    wrappers to ``PaperInfo`` before building ``ToolCallObservation``
+    lists; wrappers are not accepted here.
+    """
+    agent_papers: set[PaperInfo] = set(search_results)
     tool_papers: set[PaperInfo] = {
-        result.paper
+        result
         for call in tool_calls
         if call.tool_name == SEARCH_TOOL_NAME and call.observation is not None
         for result in call.observation
@@ -117,20 +121,17 @@ def search_result_non_hallucination(
     )
 
 
-def search_result_non_duplicate(search_results: list[SearchResult]) -> EvaluationScore:
+def search_result_non_duplicate(search_results: list[PaperInfo]) -> EvaluationScore:
     """Evaluates whether there are any duplicate search results based on title."""
     title_counter = Counter()
     for result in search_results:
-        title_counter[result.paper.title] += 1
+        title_counter[result.title] += 1
     duplicated_titles = [title for title, count in title_counter.items() if count > 1]
     if duplicated_titles:
         reason = (
-            "Duplicate search results found."
-            " Duplicates should be aggregated into a single result"
-            " with multiple search index references. Duplicate titles:\n"
+            "Duplicate papers found (same title)."
+            " Results must be unique by title. Duplicate titles:\n"
             f"{'\n'.join(duplicated_titles)}"
         )
         return EvaluationScore(passing=False, reason=reason, score=0.0)
-    return EvaluationScore(
-        passing=True, reason="No duplicate search results found.", score=1.0
-    )
+    return EvaluationScore(passing=True, reason="No duplicate papers found.", score=1.0)

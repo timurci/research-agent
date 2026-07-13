@@ -39,7 +39,11 @@ The virtual-layer choice is a deliberate deviation from physical layering; the d
 
 The port contract the application uses to invoke a language-model-based capability is the **`Agent` seam**: a generic `Agent[InputT, OutputT]` protocol with `async def __call__(data: InputT) -> OutputT`. This is the project's answer to the LM-seam question — the *single generic port* variant (one protocol parameterized by input/output types) rather than a per-capability typed port for each capability.
 
-The type variables are deliberately **unbounded**. DSPy signatures routinely wrap domain models in containers (`list[SearchResult]`, `dict[str, Model]`), so the port's output type is often a container, not a `BaseModel` itself; bounding to `BaseModel` would forbid that, and there is no reason to constrain the port. The boundary-validation payoff does not come from bounding the port — it comes from typing the *signature's* output field as a domain model, where Pydantic validates.
+## Session
+
+The shared kernel defines **`Session`**: an application-layer port for key/value working memory for one conversation session (not a domain repository). The default adapter **`InMemorySession`** lives in the same module (small kernel; no separate package). Search uses it to hold `search_results: list[PaperInfo]`; absolute list indices are the ids the LM selects. Message history for multi-turn chat may live on the same object later (YAGNI). Composition roots create one session per conversation and inject `Session` plus pure `LiteratureSearch` into `SearchAgent` (which composes `IndexedLiteratureSearch` internally).
+
+The type variables are deliberately **unbounded**. DSPy signatures routinely wrap domain models in containers (`list[PaperInfo]`, `dict[str, Model]`), so the port's output type is often a container, not a `BaseModel` itself; bounding to `BaseModel` would forbid that, and there is no reason to constrain the port. The boundary-validation payoff does not come from bounding the port — it comes from typing the *signature's* output field as a domain model, where Pydantic validates.
 
 The seam is the only place a model "shows up" above the adapter boundary. It determines provider swap (the adapter behind the port changes; the application and domain don't), offline replay (a fake `Agent` returning canned outputs), and the fakes that make the whole thing unit-testable.
 

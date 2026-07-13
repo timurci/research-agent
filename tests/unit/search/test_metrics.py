@@ -16,13 +16,7 @@ from research_agent.search.metrics import (
     search_result_non_hallucination,
     search_result_relevance,
 )
-from research_agent.search.models import (
-    PaperInfo,
-    PaperSource,
-    SearchIndexReference,
-    SearchIndexType,
-    SearchResult,
-)
+from research_agent.search.models import PaperInfo
 from research_agent.shared.metric import EvaluationScore, ToolCallObservation
 
 _ABSTRACT = (
@@ -39,31 +33,20 @@ _TITLE_D = "Delta Paper On Genomic Sequence Analysis"
 
 def _make_paper(title: str = _TITLE_A) -> PaperInfo:
     return PaperInfo(
-        source=PaperSource(
-            url=HttpUrl("https://example.com/paper"),
-            open_access=False,
-        ),
         title=title,
         abstract=_ABSTRACT,
         authors=("Alice Smith",),
-    )
-
-
-def _make_result(paper: PaperInfo | None = None) -> SearchResult:
-    return SearchResult(
-        paper=paper or _make_paper(),
-        search_index_reference=(
-            SearchIndexReference(index=SearchIndexType.ARXIV, id="1234.5678"),
-        ),
+        url=HttpUrl("https://example.com/paper"),
+        open_access=False,
     )
 
 
 def _make_observation(
-    results: list[SearchResult] | None,
+    results: list[PaperInfo] | None,
     *,
     tool_name: str = "LiteratureSearch",
-) -> ToolCallObservation[list[SearchResult]]:
-    obs: ToolCallObservation[list[SearchResult]] = ToolCallObservation(
+) -> ToolCallObservation[list[PaperInfo]]:
+    obs: ToolCallObservation[list[PaperInfo]] = ToolCallObservation(
         tool_name=tool_name,
         call_args={"query": "q", "limit": 5},
         observation=results,
@@ -72,7 +55,7 @@ def _make_observation(
 
 
 def test_search_result_relevance_raises_on_length_mismatch() -> None:
-    results = [_make_result()]
+    results = [_make_paper()]
     score = RelevanceMetric(value=0.5)
     with pytest.raises(ValueError, match="must have the same length"):
         search_result_relevance(results, [score, score])
@@ -85,7 +68,7 @@ def test_search_result_relevance_empty_input_returns_failure() -> None:
 
 def test_search_result_relevance_length_mismatch_takes_precedence_over_empty() -> None:
     with pytest.raises(ValueError, match="must have the same length"):
-        search_result_relevance([_make_result()], [])
+        search_result_relevance([_make_paper()], [])
 
 
 @pytest.mark.parametrize(
@@ -132,9 +115,7 @@ def test_search_result_relevance_cases(
     expected_verdict: str,
     expected_score: float,
 ) -> None:
-    results = [
-        _make_result(_make_paper(f"Paper Number {i:03d}")) for i in range(len(values))
-    ]
+    results = [_make_paper(f"Paper Number {i:03d}") for i in range(len(values))]
     scores = [RelevanceMetric(value=v) for v in values]
     score = search_result_relevance(results, scores)
     assert score.passing is expected_passing
@@ -151,7 +132,7 @@ def test_search_result_relevance_cases(
     ],
 )
 def test_search_result_relevance_threshold_inclusion(value: float, tier: str) -> None:
-    results = [_make_result(_make_paper(f"Paper Number {int(value * 1000):03d}"))]
+    results = [_make_paper(f"Paper Number {int(value * 1000):03d}")]
     score = search_result_relevance(results, [RelevanceMetric(value=value)])
     if tier == "HIGH":
         assert score.score == 1.0
@@ -166,9 +147,9 @@ def test_search_result_relevance_threshold_inclusion(value: float, tier: str) ->
 
 def test_search_result_relevance_reason_groups_titles_by_tier() -> None:
     results = [
-        _make_result(_make_paper(_TITLE_A)),
-        _make_result(_make_paper(_TITLE_B)),
-        _make_result(_make_paper(_TITLE_C)),
+        _make_paper(_TITLE_A),
+        _make_paper(_TITLE_B),
+        _make_paper(_TITLE_C),
     ]
     score = search_result_relevance(
         results,
@@ -188,9 +169,8 @@ def test_search_result_relevance_reason_groups_titles_by_tier() -> None:
 
 def test_search_result_non_hallucination_passes_when_agent_subset_of_tool() -> None:
     paper = _make_paper()
-    result = _make_result(paper)
-    tool_results = [_make_result(_make_paper(_TITLE_A)), _make_result(paper)]
-    score = search_result_non_hallucination([result], [_make_observation(tool_results)])
+    tool_results = [_make_paper(_TITLE_A), paper]
+    score = search_result_non_hallucination([paper], [_make_observation(tool_results)])
     assert score.passing is True
     assert score.score == 1.0
     assert score.reason == "Result contains no hallucinated search result."
@@ -199,9 +179,9 @@ def test_search_result_non_hallucination_passes_when_agent_subset_of_tool() -> N
 def test_search_result_non_hallucination_fails_when_agent_has_extra_paper() -> None:
     agent_paper = _make_paper(_TITLE_A)
     tool_paper = _make_paper(_TITLE_B)
-    tool_results = [_make_result(tool_paper)]
+    tool_results = [tool_paper]
     score = search_result_non_hallucination(
-        [_make_result(agent_paper)],
+        [agent_paper],
         [_make_observation(tool_results)],
     )
     assert score.passing is False
@@ -212,13 +192,10 @@ def test_search_result_non_hallucination_fails_when_agent_has_extra_paper() -> N
 
 
 def test_search_result_non_hallucination_passes_when_tool_has_unused_papers() -> None:
-    tool_results = [
-        _make_result(_make_paper(_TITLE_A)),
-        _make_result(_make_paper(_TITLE_B)),
-    ]
+    tool_results = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
     agent_paper = _make_paper(_TITLE_A)
     score = search_result_non_hallucination(
-        [_make_result(agent_paper)],
+        [agent_paper],
         [_make_observation(tool_results)],
     )
     assert score.passing is True
@@ -226,10 +203,7 @@ def test_search_result_non_hallucination_passes_when_tool_has_unused_papers() ->
 
 
 def test_search_result_non_hallucination_passes_when_agent_returns_nothing() -> None:
-    tool_results = [
-        _make_result(_make_paper(_TITLE_A)),
-        _make_result(_make_paper(_TITLE_B)),
-    ]
+    tool_results = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
     score = search_result_non_hallucination([], [_make_observation(tool_results)])
     assert score.passing is True
     assert score.score == 1.0
@@ -239,10 +213,10 @@ def test_search_result_non_hallucination_ignores_non_literature_search_tool_call
     None
 ):
     agent_paper = _make_paper(_TITLE_A)
-    search_observation = [_make_result(agent_paper)]
-    unrelated_observation = [_make_result(_make_paper(_TITLE_B))]
+    search_observation = [agent_paper]
+    unrelated_observation = [_make_paper(_TITLE_B)]
     score = search_result_non_hallucination(
-        [_make_result(agent_paper)],
+        [agent_paper],
         [
             _make_observation(unrelated_observation, tool_name="OtherTool"),
             _make_observation(search_observation, tool_name="LiteratureSearch"),
@@ -254,9 +228,9 @@ def test_search_result_non_hallucination_ignores_non_literature_search_tool_call
 
 def test_search_result_non_hallucination_ignores_observations_with_none() -> None:
     agent_paper = _make_paper(_TITLE_A)
-    search_observation = [_make_result(agent_paper)]
+    search_observation = [agent_paper]
     score = search_result_non_hallucination(
-        [_make_result(agent_paper)],
+        [agent_paper],
         [
             _make_observation(None),
             _make_observation(search_observation),
@@ -269,10 +243,10 @@ def test_search_result_non_hallucination_ignores_observations_with_none() -> Non
 def test_search_result_non_hallucination_unions_multiple_tool_calls() -> None:
     paper = _make_paper(_TITLE_A)
     score = search_result_non_hallucination(
-        [_make_result(paper)],
+        [paper],
         [
-            _make_observation([_make_result(_make_paper(_TITLE_B))]),
-            _make_observation([_make_result(paper)]),
+            _make_observation([_make_paper(_TITLE_B)]),
+            _make_observation([paper]),
         ],
     )
     assert score.passing is True
@@ -288,11 +262,11 @@ def test_search_result_non_hallucination_passes_on_empty_inputs() -> None:
 @pytest.mark.parametrize(
     ("titles", "expected_passing", "expected_reason_contains"),
     [
-        ([], True, ["No duplicate search results found."]),
+        ([], True, ["No duplicate papers found."]),
         (
             [_TITLE_A, _TITLE_B, _TITLE_C, _TITLE_D],
             True,
-            ["No duplicate search results found."],
+            ["No duplicate papers found."],
         ),
         ([_TITLE_A, _TITLE_B, _TITLE_A], False, ["Duplicate titles:", _TITLE_A]),
         (
@@ -307,7 +281,7 @@ def test_search_result_non_duplicate(
     expected_passing: bool,  # noqa: FBT001  # parametrize row passes (titles, passing, reason) positionally
     expected_reason_contains: list[str],
 ) -> None:
-    results = [_make_result(_make_paper(title)) for title in titles]
+    results = [_make_paper(title) for title in titles]
     score = search_result_non_duplicate(results)
     assert score.passing is expected_passing
     if expected_passing:

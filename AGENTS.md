@@ -4,7 +4,7 @@ Operating manual for AI coding agents working in this repository. File-level rul
 
 ## Project overview
 
-A research assistant for scientific literature discovery. The current capability is the **search slice**: it takes a `ResearchQuery` and returns a `list[SearchResult]` via an LLM-backed `Agent`. The slice exposes two `Agent` ports — a search agent and a reranker — composed by the `PaperSearchWorkflow` in `search/workflows.py`. Two sibling tooling packages generate synthetic training queries (`src/datagen`) and run the DSPy optimization pipeline (`src/optimize`); neither is imported at runtime.
+A research assistant for scientific literature discovery. The current capability is the **search slice**: it takes a `ResearchQuery` and returns a `list[PaperInfo]` via an LLM-backed `Agent`. The slice exposes two `Agent` ports — a search agent and a reranker — composed by the `PaperSearchWorkflow` in `search/workflows.py`. Two sibling tooling packages generate synthetic training queries (`src/datagen`) and run the DSPy optimization pipeline (`src/optimize`); neither is imported at runtime.
 
 ## Tech stack
 
@@ -54,14 +54,15 @@ Organized as **portable capability slices** under `src/research_agent/`, not phy
 src/research_agent/              runtime shell; imports slices, wires workflows
   __init__.py                    runtime shell docstring (no logic yet)
   shared/                        cross-slice kernel (contracts shared by >1 slice)
-    agent.py                     [Infrastructure] Agent[InputT, OutputT] protocol (async __call__)
-    executor.py                  [Infrastructure] run_async — offloads sync SDKs to a thread pool
+    agent.py                     [Layer: Application] Agent[InputT, OutputT] protocol (async __call__)
+    session.py                   [Layer: Application + Infrastructure] Session protocol + InMemorySession
+    executor.py                  [Layer: Infrastructure] run_async — offloads sync SDKs to a thread pool
   search/                        THE search slice; portable
     __init__.py                  slice docstring: layer roles, dependency direction
-    models.py                    [Layer: Domain] ResearchQuery, SearchResult, PaperInfo, PaperSource, SearchIndexReference, SearchIndexType
+    models.py                    [Layer: Domain] ResearchQuery, PaperInfo, SearchIndexType
     metrics.py                   [Layer: Domain] search-relevance, non-hallucination, non-duplicate metrics
-    tools.py                     [Layer: Infrastructure] LiteratureSearch + per-index handlers
-    agents.py                    [Layer: Infrastructure] DSPy search agent + LiteLLM-backed reranker
+    tools.py                     [Layer: Infrastructure] LiteratureSearch + IndexedLiteratureSearch
+    agents.py                    [Layer: Infrastructure] DSPy search agent (index select + hydrate) + reranker
     workflows.py                 [Layer: Application] PaperSearchWorkflow (search → rerank composition)
     program.py                   [Layer: Infrastructure] DSPy student program (reserved)
   workflows.py                   [Layer: Application] workflow orchestration (reserved)
@@ -85,7 +86,9 @@ Layered architecture (Ports and Adapters + DDD) as portable slices. Dependency a
 - No Domain or Application module imports Infrastructure. DSPy, prompts, tools, model names, and LLM clients never leak into Domain or Application files.
 - A slice depends only on `research_agent.shared` and external libraries. Slices never import from each other; a contract needed by two slices lives in `shared`.
 
-The `Agent[InputT, OutputT]` protocol in `research_agent.shared.agent` is the only bridge between a slice's domain and its LLM-backed infrastructure — `async def __call__(data: InputT) -> OutputT`. The type variables are deliberately unbounded: DSPy signatures wrap domain models in containers (`list[SearchResult]`, `dict[str, Model]`), so the port's output type is often a container, not a `BaseModel`. Boundary validation comes from typing a signature's output field as a domain model, not from bounding the port.
+The `Agent[InputT, OutputT]` protocol in `research_agent.shared.agent` is the only bridge between a slice's domain and its LLM-backed infrastructure — `async def __call__(data: InputT) -> OutputT`. The type variables are deliberately unbounded: DSPy signatures wrap domain models in containers (`list[PaperInfo]`, `dict[str, Model]`), so the port's output type is often a container, not a `BaseModel`. Boundary validation comes from typing a signature's output field as a domain model, not from bounding the port.
+
+`Session` in `research_agent.shared.session` is the application port for session-scoped working memory (key/value state); `InMemorySession` is the default infrastructure adapter in the same module. It is not a domain repository. Multi-turn message history may live here later (YAGNI). `SearchAgent` takes a `Session` and pure `LiteratureSearch`, builds `IndexedLiteratureSearch` internally, and exposes it to ReAct as `LiteratureSearch`. Hits append to `session["search_results"]`; list indices are the selectable ids. Construct one `Session` (and agent) per conversation session.
 
 Application methods and the ports they call are `async`. Synchronous, blocking work (e.g. a synchronous search-index SDK) stays private to infrastructure — offload it via `shared.executor.run_async` — and never surface `async`/threading in a port signature.
 
@@ -93,11 +96,11 @@ Application methods and the ports they call are `async`. Synchronous, blocking w
 
 ## Domain modeling conventions
 
-- **Ubiquitous language.** A class name must say what the object _is_ in domain terms; vague `Request`/`Result` pairings are forbidden. (`ResultIdentifier` was renamed to `SearchIndexReference` + `PaperSource` because "result of what, identifier of what?" had no answer.)
+- **Ubiquitous language.** A class name must say what the object _is_ in domain terms; vague `Request`/`Result` pairings are forbidden.
 - **Pydantic encodes domain invariants.** A domain object must never exist in an inconsistent state; enforce invariants with Pydantic validators at construction, not by patching after. (e.g. `ResearchQuery.text = Field(min_length=5)`.)
-- **Group tightly-coupled fields into their own model.** A native ID is meaningless without its index, so `SearchIndexReference(index, id)` is a unit; `SearchResult` bundles `paper: PaperInfo` (with `source: PaperSource`) plus the cross-index `search_reference`.
+- **Workflow output is bare `list[PaperInfo]`.** Each paper carries metadata (title, abstract, authors, URL, OA/PDF/DOI, optional year and citations). Results do not carry search-index provenance; `SearchIndexType` is a tool-dispatch key for `LiteratureSearch` only.
 - **Quality metrics and LLM-judge rubrics are domain knowledge.** Define them in the domain layer as pure functions over domain value objects; the optimizer in `src/optimize` consumes them. This is a _definition_, not a runtime stage.
-- **One capability in the current workflow.** The search slice exposes a single use case via the `PaperSearchWorkflow` in `search/workflows.py`: take a `ResearchQuery`, return a `list[SearchResult]`. The slice owns the search and rerank `Agent` ports; the workflow composes them. Per-result scores stay inside the reranker's adapter, not in the domain, and the slice does not expose a categorical relevance label.
+- **One capability in the current workflow.** The search slice exposes a single use case via the `PaperSearchWorkflow` in `search/workflows.py`: take a `ResearchQuery`, return a `list[PaperInfo]`. The slice owns the search and rerank `Agent` ports; the workflow composes them. Per-result scores stay inside the reranker's adapter, not in the domain, and the slice does not expose a categorical relevance label.
 
 ## Code conventions
 
@@ -113,7 +116,7 @@ Application methods and the ports they call are `async`. Synchronous, blocking w
 ## Tooling boundaries
 
 - `src/datagen` — generates `queries_train.jsonl` only. Strata → `QueryGenerator` → Jaccard dedup → domain coverage check → write. Run via `uv run generate-queries`. Output: `data/datagen/output/queries_train.jsonl`.
-- `src/optimize` — DSPy optimization. Loads queries, runs the search capability live against real indexes, scores `list[SearchResult]` with the embedding-similarity metric `mean(sims) + 10 * n_results * min(sims)`. `main.py` raises `NotImplementedError` at the optimizer-wiring step until `research_agent.search.program` (the DSPy student program) is built.
+- `src/optimize` — DSPy optimization. Loads queries, runs the search capability live against real indexes, scores `list[PaperInfo]` with the embedding-similarity metric `mean(sims) + 10 * n_results * min(sims)`. `main.py` raises `NotImplementedError` at the optimizer-wiring step until `research_agent.search.program` (the DSPy student program) is built.
 - `data/` — generated artifacts. `.gitkeep` files are committable; everything else under `data/**/output/` is gitignored.
 
 ## What NOT to do

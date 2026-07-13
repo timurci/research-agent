@@ -116,7 +116,7 @@ async def test_arxiv_normalises_missing_doi(
     out = await tool(SearchIndexType.ARXIV, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.source.doi is None
+    assert out[0].doi is None
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,7 @@ async def test_arxiv_extracts_pdf_from_links_when_no_pdf_url(
     out = await tool(SearchIndexType.ARXIV, "q", limit=5)
 
     assert len(out) == 1
-    assert str(out[0].paper.source.pdf_url) == "http://arxiv.org/pdf/2306.04338v1"
+    assert str(out[0].pdf_url) == "http://arxiv.org/pdf/2306.04338v1"
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_arxiv_sentinel_year_is_none(
     out = await tool(SearchIndexType.ARXIV, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.publication_year is None
+    assert out[0].publication_year is None
 
 
 @pytest.mark.asyncio
@@ -189,7 +189,7 @@ async def test_arxiv_filters_none_author_names(
     out = await tool(SearchIndexType.ARXIV, "q", limit=5)
 
     assert len(out) == 1
-    assert list(out[0].paper.authors) == ["Alice", "Bob"]
+    assert list(out[0].authors) == ["Alice", "Bob"]
 
 
 @pytest.mark.asyncio
@@ -210,7 +210,7 @@ async def test_arxiv_coerces_empty_doi_to_none(
     out = await tool(SearchIndexType.ARXIV, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.source.doi is None
+    assert out[0].doi is None
 
 
 @pytest.mark.asyncio
@@ -237,7 +237,7 @@ async def test_arxiv_drops_records_missing_title_or_abstract(
     out = await tool(SearchIndexType.ARXIV, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].search_index_reference[0].id == good.entry_id
+    assert str(out[0].url) == good.entry_id
 
 
 # --- PubMed ---
@@ -327,7 +327,7 @@ async def test_pubmed_handles_abstract_list(
     out = await tool(SearchIndexType.PUBMED, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.abstract == (
+    assert out[0].abstract == (
         "Part one introduces a new approach to the problem under study and "
         "presents a detailed methodology that builds on prior work in the area. "
         "Part two presents a thorough experimental evaluation and an analysis "
@@ -352,7 +352,7 @@ async def test_pubmed_handles_collective_name(
     out = await tool(SearchIndexType.PUBMED, "q", limit=5)
 
     assert len(out) == 1
-    assert list(out[0].paper.authors) == ["The Cancer Genome Atlas Network"]
+    assert list(out[0].authors) == ["The Cancer Genome Atlas Network"]
 
 
 @pytest.mark.asyncio
@@ -365,7 +365,7 @@ async def test_pubmed_handles_missing_year(
     out = await tool(SearchIndexType.PUBMED, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.publication_year is None
+    assert out[0].publication_year is None
 
 
 @pytest.mark.asyncio
@@ -385,7 +385,7 @@ async def test_pubmed_handles_non_list_abstract(
     out = await tool(SearchIndexType.PUBMED, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.abstract.startswith("A single string abstract that introduces")
+    assert out[0].abstract.startswith("A single string abstract that introduces")
 
 
 @pytest.mark.asyncio
@@ -400,7 +400,7 @@ async def test_pubmed_coerces_empty_doi_to_none(
     out = await tool(SearchIndexType.PUBMED, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.source.doi is None
+    assert out[0].doi is None
 
 
 @pytest.mark.asyncio
@@ -442,7 +442,7 @@ async def test_pubmed_drops_records_missing_title_or_abstract(
     out = await tool(SearchIndexType.PUBMED, "cancer", limit=5)
 
     assert len(out) == 1
-    assert out[0].search_index_reference[0].id == "12345"
+    assert "12345" in str(out[0].url)
 
 
 # --- CrossRef ---
@@ -505,7 +505,7 @@ async def test_crossref_strips_jats_from_abstract(
     out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.abstract == (
+    assert out[0].abstract == (
         "Background: Important findings are presented in this paper, "
         "introducing a new approach to the problem under study, presenting "
         "a detailed methodology with a thorough experimental evaluation, "
@@ -526,7 +526,7 @@ async def test_crossref_falls_back_on_published_online(
     out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.publication_year == 2022
+    assert out[0].publication_year == 2022
 
 
 @pytest.mark.asyncio
@@ -542,7 +542,7 @@ async def test_crossref_falls_back_on_issued(
     out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.publication_year == 2019
+    assert out[0].publication_year == 2019
 
 
 @pytest.mark.asyncio
@@ -557,7 +557,7 @@ async def test_crossref_falls_back_url_to_doi_org(
     out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
-    assert str(out[0].paper.source.url) == "https://doi.org/10.1234/test"
+    assert str(out[0].url) == "https://doi.org/10.1234/test"
 
 
 @pytest.mark.asyncio
@@ -584,7 +584,7 @@ async def test_crossref_coerces_empty_doi_to_none(
     out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].paper.source.doi is None
+    assert out[0].doi is None
 
 
 @pytest.mark.asyncio
@@ -615,4 +615,4 @@ async def test_crossref_drops_records_missing_title_or_abstract(
     out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].search_index_reference[0].id == good["DOI"]
+    assert out[0].doi == good["DOI"]

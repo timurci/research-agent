@@ -5,14 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import HttpUrl
 
-from research_agent.search.models import (
-    PaperInfo,
-    PaperSource,
-    ResearchQuery,
-    SearchIndexReference,
-    SearchIndexType,
-    SearchResult,
-)
+from research_agent.search.models import PaperInfo, ResearchQuery
 from research_agent.search.workflows import PaperSearchWorkflow
 
 _ABSTRACT = (
@@ -27,30 +20,22 @@ _TITLE_C = "Paper Gamma On Quantum Computing Advances"
 
 def _paper(title: str) -> PaperInfo:
     return PaperInfo(
-        source=PaperSource(url=HttpUrl("https://example.com/p"), open_access=False),
         title=title,
         abstract=_ABSTRACT,
         authors=("Alice",),
-    )
-
-
-def _result(paper: PaperInfo) -> SearchResult:
-    return SearchResult(
-        paper=paper,
-        search_index_reference=(
-            SearchIndexReference(index=SearchIndexType.ARXIV, id="1"),
-        ),
+        url=HttpUrl("https://example.com/p"),
+        open_access=False,
     )
 
 
 class _FakeSearchAgent:
     """In-memory fake of the search agent port."""
 
-    def __init__(self, results: list[SearchResult]) -> None:
+    def __init__(self, results: list[PaperInfo]) -> None:
         self.calls: list[ResearchQuery] = []
         self._results = results
 
-    async def __call__(self, data: ResearchQuery) -> list[SearchResult]:
+    async def __call__(self, data: ResearchQuery) -> list[PaperInfo]:
         self.calls.append(data)
         return list(self._results)
 
@@ -58,14 +43,14 @@ class _FakeSearchAgent:
 class _FakeReranker:
     """In-memory fake of the reranker agent port."""
 
-    def __init__(self, reordered: list[SearchResult]) -> None:
-        self.calls: list[tuple[ResearchQuery, list[SearchResult]]] = []
+    def __init__(self, reordered: list[PaperInfo]) -> None:
+        self.calls: list[tuple[ResearchQuery, list[PaperInfo]]] = []
         self._reordered = reordered
 
     async def __call__(
         self,
-        data: tuple[ResearchQuery, list[SearchResult]],
-    ) -> list[SearchResult]:
+        data: tuple[ResearchQuery, list[PaperInfo]],
+    ) -> list[PaperInfo]:
         self.calls.append(data)
         return list(self._reordered)
 
@@ -77,7 +62,7 @@ def _query() -> ResearchQuery:
 @pytest.mark.asyncio
 async def test_returns_reranked_results() -> None:
     a, b, c = _paper(_TITLE_A), _paper(_TITLE_B), _paper(_TITLE_C)
-    results = [_result(a), _result(b), _result(c)]
+    results = [a, b, c]
     reordered = [results[2], results[0], results[1]]
     workflow = PaperSearchWorkflow(_FakeSearchAgent(results), _FakeReranker(reordered))
 
@@ -111,7 +96,7 @@ async def test_passes_query_to_search_agent() -> None:
 @pytest.mark.asyncio
 async def test_passes_query_and_results_to_reranker() -> None:
     query = _query()
-    results = [_result(_paper(_TITLE_A))]
+    results = [_paper(_TITLE_A)]
     search, rerank = _FakeSearchAgent(results), _FakeReranker(results)
     workflow = PaperSearchWorkflow(search, rerank)
 

@@ -14,14 +14,7 @@ import pytest
 from pydantic import HttpUrl
 
 from research_agent.search.agents import Reranker
-from research_agent.search.models import (
-    PaperInfo,
-    PaperSource,
-    ResearchQuery,
-    SearchIndexReference,
-    SearchIndexType,
-    SearchResult,
-)
+from research_agent.search.models import PaperInfo, ResearchQuery
 
 if TYPE_CHECKING:
     from research_agent.shared.agent import LMConfig
@@ -37,19 +30,11 @@ _ABSTRACT: str = (
 
 def _paper(title: str) -> PaperInfo:
     return PaperInfo(
-        source=PaperSource(url=HttpUrl("https://example.com/p"), open_access=False),
         title=title,
         abstract=_ABSTRACT,
         authors=("Alice",),
-    )
-
-
-def _result(paper: PaperInfo) -> SearchResult:
-    return SearchResult(
-        paper=paper,
-        search_index_reference=(
-            SearchIndexReference(index=SearchIndexType.ARXIV, id="1"),
-        ),
+        url=HttpUrl("https://example.com/p"),
+        open_access=False,
     )
 
 
@@ -61,9 +46,9 @@ async def test_reranker_returns_permutation_of_inputs(
     """Reranker output is a permutation of the input results."""
     reranker = Reranker(reranker_lm_config)
     results = [
-        _result(_paper("Paper Alpha On Machine Learning Advances")),
-        _result(_paper("Paper Beta On Machine Learning Advances")),
-        _result(_paper("Paper Gamma On Machine Learning Advances")),
+        _paper("Paper Alpha On Machine Learning Advances"),
+        _paper("Paper Beta On Machine Learning Advances"),
+        _paper("Paper Gamma On Machine Learning Advances"),
     ]
     query = ResearchQuery(text="machine learning")
 
@@ -73,8 +58,8 @@ async def test_reranker_returns_permutation_of_inputs(
     )
 
     assert len(out) == len(results)
-    input_titles = {r.paper.title for r in results}
-    output_titles = {r.paper.title for r in out}
+    input_titles = {r.title for r in results}
+    output_titles = {r.title for r in out}
     assert output_titles == input_titles
 
 
@@ -89,11 +74,7 @@ async def test_reranker_reorders_by_relevance(
     irrelevant_paper = _paper("Quantum Computing with Superconducting Qubits")
     somewhat_relevant_paper = _paper("Attention Mechanisms in Neural Networks")
     query = ResearchQuery(text="BERT language model pre-training")
-    results = [
-        _result(irrelevant_paper),
-        _result(bert_paper),
-        _result(somewhat_relevant_paper),
-    ]
+    results = [irrelevant_paper, bert_paper, somewhat_relevant_paper]
 
     out = await asyncio.wait_for(
         reranker((query, results)),
@@ -101,4 +82,4 @@ async def test_reranker_reorders_by_relevance(
     )
 
     assert len(out) == len(results)
-    assert "BERT" in out[0].paper.title
+    assert "BERT" in out[0].title

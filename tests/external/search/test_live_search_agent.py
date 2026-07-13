@@ -15,18 +15,25 @@ import pytest
 
 from research_agent.search.agents import SearchAgent
 from research_agent.search.models import ResearchQuery
+from research_agent.search.tools import LiteratureSearch
+from research_agent.shared.session import InMemorySession
 
 if TYPE_CHECKING:
     from research_agent.shared.agent import LMConfig
 
-_TIMEOUT_SECONDS: float = 120.0
+_TIMEOUT_SECONDS: float = 30.0
+
+
+def _make_agent(search_lm_config: LMConfig) -> SearchAgent:
+    session = InMemorySession()
+    return SearchAgent(search_lm_config, session, LiteratureSearch())
 
 
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_search_agent_finds_bert_paper(search_lm_config: LMConfig) -> None:
     """Search returns BERT-related results via the ReAct agent."""
-    agent = SearchAgent(search_lm_config)
+    agent = _make_agent(search_lm_config)
     query = ResearchQuery(
         text="BERT Pre-training of Deep Bidirectional Transformers",
     )
@@ -37,8 +44,8 @@ async def test_search_agent_finds_bert_paper(search_lm_config: LMConfig) -> None
     )
 
     if results:
-        assert any("BERT" in r.paper.title for r in results)
-        assert any("Devlin" in a for r in results for a in r.paper.authors)
+        assert any("BERT" in r.title for r in results)
+        assert any("Devlin" in a for r in results for a in r.authors)
 
 
 @pytest.mark.live
@@ -47,7 +54,7 @@ async def test_search_agent_handles_domains_scoped_query(
     search_lm_config: LMConfig,
 ) -> None:
     """Search accepts a query with domains and returns relevant results."""
-    agent = SearchAgent(search_lm_config)
+    agent = _make_agent(search_lm_config)
     query = ResearchQuery(
         text="transformer architecture attention mechanism",
         domains=("machine learning",),
@@ -60,7 +67,6 @@ async def test_search_agent_handles_domains_scoped_query(
 
     if results:
         assert any(
-            "transformer" in r.paper.title.lower()
-            or "attention" in r.paper.title.lower()
+            "transformer" in r.title.lower() or "attention" in r.title.lower()
             for r in results
         )

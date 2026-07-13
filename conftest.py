@@ -4,10 +4,14 @@ Registers the ``live`` marker and skips live-tagged tests by default so
 ``uv run pytest`` never attempts network calls. Run live tests explicitly:
 
     uv run pytest -m live
+
+Also disables DSPy on-disk LM caching so independent test runs do not reuse
+responses from ``~/.dspy_cache``.
 """
 
 from __future__ import annotations
 
+import dspy
 import pytest
 
 
@@ -31,3 +35,9 @@ def pytest_collection_modifyitems(
     for item in items:
         if item.get_closest_marker("live"):
             item.add_marker(skip_live)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_dspy_disk_cache() -> None:
+    """Prevent LM responses from persisting across independent test runs."""
+    dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=True)

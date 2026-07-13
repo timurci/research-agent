@@ -7,7 +7,7 @@ from pydantic import HttpUrl
 
 from research_agent.shared.agent import LMConfig
 
-SEARCH_MODEL: str = "openai/LFM2.5-8B-A1B"
+SEARCH_MODEL: str = "openai/Qwen3.5-4B"
 SEARCH_API_KEY: str = "ignored-auth-key"
 SEARCH_BASE_URL: str = "http://localhost:8080/v1"
 

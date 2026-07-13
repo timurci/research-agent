@@ -1,10 +1,9 @@
 """Hashability and coercion regression tests for the frozen domain models.
 
 Models that are ``frozen=True`` and contain only hashable fields should be
-hashable so that downstream code (e.g. ``set[PaperInfo]`` in
-``search_result_non_hallucination``) can use them as set / dict keys.
-``ToolCallObservation`` is frozen for immutability but intentionally
-unhashable because ``call_args`` is a ``dict``.
+hashable so that downstream code (e.g. ``set[PaperInfo]``) can use them as
+set / dict keys. ``ToolCallObservation`` is frozen for immutability but
+intentionally unhashable because ``call_args`` is a ``dict``.
 
 This file pins those invariants: equal hashable models produce equal hashes;
 an equal model is deduplicated in a set; a model whose field differs is not

@@ -60,7 +60,7 @@ src/research_agent/              runtime shell; imports slices, wires workflows
   search/                        THE search slice; portable
     __init__.py                  slice docstring: layer roles, dependency direction
     models.py                    [Layer: Domain] ResearchQuery, PaperInfo, SearchIndexType
-    metrics.py                   [Layer: Domain] search-relevance, non-hallucination, non-duplicate metrics
+    metrics.py                   [Layer: Domain] search-relevance, non-duplicate metrics
     tools.py                     [Layer: Infrastructure] LiteratureSearch + IndexedLiteratureSearch
     agents.py                    [Layer: Infrastructure] DSPy search agent (index select + hydrate) + reranker
     workflows.py                 [Layer: Application] PaperSearchWorkflow (search → rerank composition)

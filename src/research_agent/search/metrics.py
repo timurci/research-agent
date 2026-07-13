@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from research_agent.shared.metric import EvaluationScore, ToolCallObservation
+from research_agent.shared.metric import EvaluationScore
 
 if TYPE_CHECKING:
     from research_agent.search.models import PaperInfo
@@ -17,8 +17,6 @@ HIGH_RELEVANCE_THRESHOLD = 0.7
 MEDIUM_RELEVANCE_THRESHOLD = 0.3
 HIGH_RELEVANCE_SCORE = 1.0
 MEDIUM_RELEVANCE_SCORE = 0.5
-
-SEARCH_TOOL_NAME = "LiteratureSearch"
 
 
 class RelevanceMetric(BaseModel):
@@ -88,37 +86,6 @@ def search_result_relevance(
     )
 
     return EvaluationScore(passing=passing, reason=reason, score=metric_score)
-
-
-def search_result_non_hallucination(
-    search_results: list[PaperInfo],
-    tool_calls: list[ToolCallObservation[list[PaperInfo]]],
-) -> EvaluationScore:
-    """Evaluate whether search results are present in tool observations.
-
-    Observation entries must be plain ``PaperInfo`` values. Callers that
-    collect ReAct traces must unwrap any index-tagged tool observation
-    wrappers to ``PaperInfo`` before building ``ToolCallObservation``
-    lists; wrappers are not accepted here.
-    """
-    agent_papers: set[PaperInfo] = set(search_results)
-    tool_papers: set[PaperInfo] = {
-        result
-        for call in tool_calls
-        if call.tool_name == SEARCH_TOOL_NAME and call.observation is not None
-        for result in call.observation
-    }
-
-    hallucinated_papers = agent_papers - tool_papers
-
-    if len(hallucinated_papers) > 0:
-        titles = "\n".join([p.title for p in hallucinated_papers])
-        reason = f"Hallucinated paper details found for papers:\n{titles}"
-        return EvaluationScore(passing=False, reason=reason, score=0.0)
-
-    return EvaluationScore(
-        passing=True, reason="Result contains no hallucinated search result.", score=1.0
-    )
 
 
 def search_result_non_duplicate(search_results: list[PaperInfo]) -> EvaluationScore:

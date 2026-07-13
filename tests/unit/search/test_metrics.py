@@ -1,8 +1,8 @@
 """Unit tests for the search evaluation metrics.
 
-Exercises the three pure domain metric functions:
-``search_result_relevance``, ``search_result_non_hallucination``, and
-``search_result_non_duplicate``. No network, no LLM, no async.
+Exercises the pure domain metric functions:
+``search_result_relevance`` and ``search_result_non_duplicate``.
+No network, no LLM, no async.
 """
 
 from __future__ import annotations
@@ -13,11 +13,10 @@ from pydantic import HttpUrl
 from research_agent.search.metrics import (
     RelevanceMetric,
     search_result_non_duplicate,
-    search_result_non_hallucination,
     search_result_relevance,
 )
 from research_agent.search.models import PaperInfo
-from research_agent.shared.metric import EvaluationScore, ToolCallObservation
+from research_agent.shared.metric import EvaluationScore
 
 _ABSTRACT = (
     "A sufficiently long abstract describing the research methodology, "
@@ -39,19 +38,6 @@ def _make_paper(title: str = _TITLE_A) -> PaperInfo:
         url=HttpUrl("https://example.com/paper"),
         open_access=False,
     )
-
-
-def _make_observation(
-    results: list[PaperInfo] | None,
-    *,
-    tool_name: str = "LiteratureSearch",
-) -> ToolCallObservation[list[PaperInfo]]:
-    obs: ToolCallObservation[list[PaperInfo]] = ToolCallObservation(
-        tool_name=tool_name,
-        call_args={"query": "q", "limit": 5},
-        observation=results,
-    )
-    return obs
 
 
 def test_search_result_relevance_raises_on_length_mismatch() -> None:
@@ -165,98 +151,6 @@ def test_search_result_relevance_reason_groups_titles_by_tier() -> None:
     assert _TITLE_A in score.reason
     assert _TITLE_C in score.reason
     assert _TITLE_B not in score.reason.split("High relevance", 1)[1]
-
-
-def test_search_result_non_hallucination_passes_when_agent_subset_of_tool() -> None:
-    paper = _make_paper()
-    tool_results = [_make_paper(_TITLE_A), paper]
-    score = search_result_non_hallucination([paper], [_make_observation(tool_results)])
-    assert score.passing is True
-    assert score.score == 1.0
-    assert score.reason == "Result contains no hallucinated search result."
-
-
-def test_search_result_non_hallucination_fails_when_agent_has_extra_paper() -> None:
-    agent_paper = _make_paper(_TITLE_A)
-    tool_paper = _make_paper(_TITLE_B)
-    tool_results = [tool_paper]
-    score = search_result_non_hallucination(
-        [agent_paper],
-        [_make_observation(tool_results)],
-    )
-    assert score.passing is False
-    assert score.score == 0.0
-    assert score.reason.startswith("Hallucinated paper details found for papers:")
-    assert _TITLE_A in score.reason
-    assert _TITLE_B not in score.reason
-
-
-def test_search_result_non_hallucination_passes_when_tool_has_unused_papers() -> None:
-    tool_results = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
-    agent_paper = _make_paper(_TITLE_A)
-    score = search_result_non_hallucination(
-        [agent_paper],
-        [_make_observation(tool_results)],
-    )
-    assert score.passing is True
-    assert score.score == 1.0
-
-
-def test_search_result_non_hallucination_passes_when_agent_returns_nothing() -> None:
-    tool_results = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
-    score = search_result_non_hallucination([], [_make_observation(tool_results)])
-    assert score.passing is True
-    assert score.score == 1.0
-
-
-def test_search_result_non_hallucination_ignores_non_literature_search_tool_calls() -> (
-    None
-):
-    agent_paper = _make_paper(_TITLE_A)
-    search_observation = [agent_paper]
-    unrelated_observation = [_make_paper(_TITLE_B)]
-    score = search_result_non_hallucination(
-        [agent_paper],
-        [
-            _make_observation(unrelated_observation, tool_name="OtherTool"),
-            _make_observation(search_observation, tool_name="LiteratureSearch"),
-        ],
-    )
-    assert score.passing is True
-    assert score.score == 1.0
-
-
-def test_search_result_non_hallucination_ignores_observations_with_none() -> None:
-    agent_paper = _make_paper(_TITLE_A)
-    search_observation = [agent_paper]
-    score = search_result_non_hallucination(
-        [agent_paper],
-        [
-            _make_observation(None),
-            _make_observation(search_observation),
-        ],
-    )
-    assert score.passing is True
-    assert score.score == 1.0
-
-
-def test_search_result_non_hallucination_unions_multiple_tool_calls() -> None:
-    paper = _make_paper(_TITLE_A)
-    score = search_result_non_hallucination(
-        [paper],
-        [
-            _make_observation([_make_paper(_TITLE_B)]),
-            _make_observation([paper]),
-        ],
-    )
-    assert score.passing is True
-    assert score.score == 1.0
-
-
-def test_search_result_non_hallucination_passes_on_empty_inputs() -> None:
-    score = search_result_non_hallucination([], [])
-    assert score.passing is True
-    assert score.score == 1.0
 
 
 @pytest.mark.parametrize(

@@ -22,3 +22,4 @@ data/**/output/*
 # Coding agent or IDE configurations
 .opencode
 .pi
+.agents

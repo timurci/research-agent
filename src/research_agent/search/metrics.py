@@ -4,6 +4,7 @@ Layer: Domain.
 """
 
 from collections import Counter
+from math import log2
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,6 +18,9 @@ HIGH_RELEVANCE_THRESHOLD = 0.7
 MEDIUM_RELEVANCE_THRESHOLD = 0.3
 HIGH_RELEVANCE_SCORE = 1.0
 MEDIUM_RELEVANCE_SCORE = 0.5
+NDCG_AT_K = 10
+MIN_RELEVANCE_GRADE = 0
+MAX_RELEVANCE_GRADE = 3
 
 
 class RelevanceMetric(BaseModel):
@@ -102,3 +106,54 @@ def search_result_non_duplicate(search_results: list[PaperInfo]) -> EvaluationSc
         )
         return EvaluationScore(passing=False, reason=reason, score=0.0)
     return EvaluationScore(passing=True, reason="No duplicate papers found.", score=1.0)
+
+
+def _validate_relevance_grades(doc_relevance_scores: dict[str, int]) -> None:
+    """Raise if any ground-truth grade is outside the supported range."""
+    for doc_id, grade in doc_relevance_scores.items():
+        if not MIN_RELEVANCE_GRADE <= grade <= MAX_RELEVANCE_GRADE:
+            error_msg = (
+                f"Relevance grade for {doc_id!r} must be in "
+                f"[{MIN_RELEVANCE_GRADE}, {MAX_RELEVANCE_GRADE}], got {grade}"
+            )
+            raise ValueError(error_msg)
+
+
+def _dcg_at_k(relevances: list[int], k: int) -> float:
+    """Discounted cumulative gain at rank ``k`` with exponential gain."""
+    total = 0.0
+    for i, rel in enumerate(relevances[:k]):
+        total += (2**rel - 1) / log2(i + 2)
+    return total
+
+
+def ndcg_at_10(
+    reranked_docs: list[str],
+    doc_relevance_scores: dict[str, int],
+) -> float:
+    """Compute NDCG@10 for a reranked document list.
+
+    Uses graded relevance in ``[0, 3]`` and the exponential gain
+    ``2^rel - 1`` with logarithmic rank discount. Ideal DCG is taken
+    over the same candidate set as ``reranked_docs``. Documents missing
+    from ``doc_relevance_scores`` are treated as relevance 0. Returns
+    0.0 when ideal DCG is zero (no relevant documents).
+
+    Args:
+        reranked_docs: Document identifiers in ranked order (best first).
+        doc_relevance_scores: Ground-truth relevance grades keyed by
+            document id. Each grade must be an integer in ``[0, 3]``.
+
+    Returns:
+        NDCG@10 in ``[0.0, 1.0]``.
+
+    Raises:
+        ValueError: If any relevance grade is outside ``[0, 3]``.
+    """
+    _validate_relevance_grades(doc_relevance_scores)
+    relevances = [doc_relevance_scores.get(doc_id, 0) for doc_id in reranked_docs]
+    dcg = _dcg_at_k(relevances, NDCG_AT_K)
+    idcg = _dcg_at_k(sorted(relevances, reverse=True), NDCG_AT_K)
+    if idcg == 0.0:
+        return 0.0
+    return dcg / idcg

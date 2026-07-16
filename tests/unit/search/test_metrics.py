@@ -1,17 +1,20 @@
 """Unit tests for the search evaluation metrics.
 
 Exercises the pure domain metric functions:
-``search_result_relevance`` and ``search_result_non_duplicate``.
-No network, no LLM, no async.
+``search_result_relevance``, ``search_result_non_duplicate``, and
+``ndcg_at_10``. No network, no LLM, no async.
 """
 
 from __future__ import annotations
+
+import math
 
 import pytest
 from pydantic import HttpUrl
 
 from research_agent.search.metrics import (
     RelevanceMetric,
+    ndcg_at_10,
     search_result_non_duplicate,
     search_result_relevance,
 )
@@ -184,3 +187,77 @@ def test_search_result_non_duplicate(
         assert score.score == 0.0
     for fragment in expected_reason_contains:
         assert fragment in score.reason
+
+
+def _expected_dcg(relevances: list[int], k: int = 10) -> float:
+    total = 0.0
+    for i, rel in enumerate(relevances[:k]):
+        total += (2**rel - 1) / math.log2(i + 2)
+    return total
+
+
+def _expected_ndcg(relevances: list[int], k: int = 10) -> float:
+    dcg = _expected_dcg(relevances, k)
+    idcg = _expected_dcg(sorted(relevances, reverse=True), k)
+    if idcg == 0.0:
+        return 0.0
+    return dcg / idcg
+
+
+def test_ndcg_at_10_perfect_ranking_is_one() -> None:
+    docs = ["a", "b", "c"]
+    scores = {"a": 3, "b": 2, "c": 1}
+    assert ndcg_at_10(docs, scores) == pytest.approx(1.0)
+
+
+def test_ndcg_at_10_reversed_ranking_matches_formula() -> None:
+    docs = ["c", "b", "a"]
+    scores = {"a": 3, "b": 2, "c": 0}
+    expected = _expected_ndcg([0, 2, 3])
+    assert ndcg_at_10(docs, scores) == pytest.approx(expected)
+    assert 0.0 < ndcg_at_10(docs, scores) < 1.0
+
+
+def test_ndcg_at_10_empty_ranking_is_zero() -> None:
+    assert ndcg_at_10([], {"a": 3}) == 0.0
+
+
+def test_ndcg_at_10_all_zero_relevance_is_zero() -> None:
+    docs = ["a", "b", "c"]
+    scores = {"a": 0, "b": 0, "c": 0}
+    assert ndcg_at_10(docs, scores) == 0.0
+
+
+def test_ndcg_at_10_missing_label_treated_as_zero() -> None:
+    docs = ["a", "b", "c"]
+    scores = {"a": 3, "c": 1}
+    expected = _expected_ndcg([3, 0, 1])
+    assert ndcg_at_10(docs, scores) == pytest.approx(expected)
+
+
+def test_ndcg_at_10_uses_only_top_ten() -> None:
+    docs = [f"d{i}" for i in range(12)]
+    scores = dict.fromkeys(docs, 0)
+    scores["d0"] = 0
+    scores["d9"] = 3
+    scores["d10"] = 3
+    scores["d11"] = 3
+    expected = _expected_ndcg([scores[d] for d in docs], k=10)
+    assert ndcg_at_10(docs, scores) == pytest.approx(expected)
+    assert ndcg_at_10(docs, scores) < 1.0
+
+
+def test_ndcg_at_10_ideal_uses_full_candidate_set_not_only_top_ten() -> None:
+    docs = [f"d{i}" for i in range(12)]
+    scores = dict.fromkeys(docs, 0)
+    scores["d10"] = 3
+    scores["d11"] = 2
+    expected = _expected_ndcg([scores[d] for d in docs], k=10)
+    assert ndcg_at_10(docs, scores) == pytest.approx(expected)
+    assert ndcg_at_10(docs, scores) == 0.0
+
+
+@pytest.mark.parametrize("bad_grade", [-1, 4, 10])
+def test_ndcg_at_10_rejects_out_of_range_grades(bad_grade: int) -> None:
+    with pytest.raises(ValueError, match=r"\[0, 3\]"):
+        ndcg_at_10(["a"], {"a": bad_grade})

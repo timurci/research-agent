@@ -8,9 +8,10 @@ no gold paper lists. ``predict_fn`` is the search ``Agent`` /
 
 Relevance scores are produced at score time by a reranker agent, not
 loaded from expectations. Default query scorers use the same
-``RERANK_LM_CONFIG`` family as the e2e workflow reranker, so e2e
+``search-rerank`` YAML role as the e2e workflow reranker, so e2e
 relevance is largely self-labeled (bootstrap only). Point the labeler
-at a held-out model via ``SEARCH_RERANK_*`` / ``reranker(lm_config=...)``.
+at a held-out model via ``config/lm.yaml`` or
+``reranker(lm_config=...)``.
 
 Domain metric logic is not reimplemented here.
 """
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
 
     from mlflow.entities import Feedback
     from mlflow.genai.scorers import Scorer
+
+    from research_agent.shared.agent import LMConfig
 
 SEARCH_METRICS_SOURCE = code_assessment_source("research_agent.search.metrics")
 
@@ -197,15 +200,22 @@ def _relevance_feedback(
     )
 
 
-def search_query_scorers() -> Sequence[Scorer]:
+def search_query_scorers(
+    *,
+    lm_config: LMConfig | None = None,
+) -> Sequence[Scorer]:
     """Default scorers for query-only search modules.
 
-    Relevance uses the default eval reranker (same family as the e2e
-    workflow). Self-labeled relevance is a bootstrap signal only.
+    Relevance uses the eval reranker (same family as the e2e workflow).
+    Self-labeled relevance is a bootstrap signal only.
+
+    Args:
+        lm_config: Reranker LM settings for the relevance labeler.
+            Defaults to the ``search-rerank`` role from ``config/lm.yaml``.
     """
     return (
         search_result_non_duplicate_scorer,
-        make_search_result_relevance_scorer(reranker()),
+        make_search_result_relevance_scorer(reranker(lm_config=lm_config)),
     )
 
 

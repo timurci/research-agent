@@ -1,0 +1,17 @@
+# Copy to config/lm.yaml and edit for local endpoints.
+# Roles are validated as research_agent.shared.agent.LMConfig fields.
+# Optional provider_config is forwarded to LiteLLM as extra_body.
+
+search-search:
+  model: openai/Qwen3.5-4B
+  api_key: ignored-auth-key
+  base_url: http://localhost:8080/v1
+  # provider_config:
+  #   provider:
+  #     order: [OpenAI]
+  #     allow_fallbacks: true
+
+search-rerank:
+  model: infinity/LFM2.5-ColBERT-350M
+  api_key: ignored-auth-key
+  base_url: http://localhost:8080/v1

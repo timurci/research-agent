@@ -5,8 +5,8 @@ Query-only modules load HF research queries with no gold paper lists.
 rerank. Default relevance scorers label with the same default reranker
 config family as the e2e workflow, so e2e relevance is largely
 self-labeled — useful as a bootstrap, not as an independent ranking
-judge. Prefer a held-out labeler via ``SEARCH_RERANK_*`` /
-``reranker(lm_config=...)``.
+judge. Prefer a held-out labeler via injected ``LMConfig`` for
+``search-rerank`` or ``reranker(lm_config=...)``.
 """
 
 from __future__ import annotations
@@ -25,6 +25,10 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     from mlflow.genai.scorers import Scorer
+
+    from research_agent.shared.agent import LMConfig
+
+MODULE_NAMES: frozenset[str] = frozenset({"search", "search-e2e"})
 
 
 def as_query_predict_fn(
@@ -63,7 +67,30 @@ def query_module(
     )
 
 
-MODULES: dict[str, EvalModule] = {
-    "search-e2e": query_module("search-e2e", paper_search_workflow),
-    "search": query_module("search", search_agent),
-}
+def build_modules(
+    *,
+    search_lm_config: LMConfig,
+    rerank_lm_config: LMConfig,
+) -> dict[str, EvalModule]:
+    """Build search eval modules with injected LM configs.
+
+    Args:
+        search_lm_config: ``search-search`` settings for the search agent.
+        rerank_lm_config: ``search-rerank`` settings for workflow rerank
+            and relevance scorers.
+    """
+    return {
+        "search": query_module(
+            "search",
+            lambda: search_agent(lm_config=search_lm_config),
+            scorers=lambda: search_query_scorers(lm_config=rerank_lm_config),
+        ),
+        "search-e2e": query_module(
+            "search-e2e",
+            lambda: paper_search_workflow(
+                search_lm_config=search_lm_config,
+                rerank_lm_config=rerank_lm_config,
+            ),
+            scorers=lambda: search_query_scorers(lm_config=rerank_lm_config),
+        ),
+    }

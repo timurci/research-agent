@@ -1,14 +1,15 @@
 """Concrete agents for search evaluation.
 
 Evals infrastructure: wires DSPy/LiteLLM adapters. Default ``LMConfig``
-values are hard-coded (same endpoints as live tests) and overridable at
-import time via suite-prefixed environment variables (no dotenv):
+values load from ``config/lm.yaml`` (``DEFAULT_LM_CONFIG_PATH``) when not
+injected:
 
-* ``SEARCH_MODEL``, ``SEARCH_API_KEY``, ``SEARCH_BASE_URL``
-* ``SEARCH_RERANK_MODEL``, ``SEARCH_RERANK_API_KEY``, ``SEARCH_RERANK_BASE_URL``
+* ``search-search`` — search agent
+* ``search-rerank`` — reranker / relevance labeler
 
 Builders accept an optional ``lm_config`` to inject a custom config
-(tests, alternate endpoints) without depending on process env.
+(tests, CLI composition root, alternate endpoints) without reading the
+file. Prefer injection over ambient defaults.
 
 MLflow scorers import these agents; they do not import DSPy themselves.
 
@@ -20,36 +21,18 @@ MLflow scorers import these agents; they do not import DSPy themselves.
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
-
-from pydantic import HttpUrl
 
 from research_agent.search.agents import Reranker, SearchAgent
 from research_agent.search.tools import LiteratureSearch
 from research_agent.search.workflows import PaperSearchWorkflow
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.lm_config import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
+from research_agent.shared.lm_config import lm_config as load_lm_config
 from research_agent.shared.session import InMemorySession
 
 if TYPE_CHECKING:
     from research_agent.search.models import PaperInfo, ResearchQuery
-    from research_agent.shared.agent import Agent
-
-SEARCH_LM_CONFIG = LMConfig(
-    model=os.environ.get("SEARCH_MODEL", "openai/Qwen3.5-4B"),
-    api_key=os.environ.get("SEARCH_API_KEY", "ignored-auth-key"),
-    base_url=HttpUrl(
-        os.environ.get("SEARCH_BASE_URL", "http://localhost:8080/v1"),
-    ),
-)
-
-RERANK_LM_CONFIG = LMConfig(
-    model=os.environ.get("SEARCH_RERANK_MODEL", "infinity/LFM2.5-ColBERT-350M"),
-    api_key=os.environ.get("SEARCH_RERANK_API_KEY", "ignored-auth-key"),
-    base_url=HttpUrl(
-        os.environ.get("SEARCH_RERANK_BASE_URL", "http://localhost:8080/v1"),
-    ),
-)
+    from research_agent.shared.agent import Agent, LMConfig
 
 
 def search_agent(
@@ -63,15 +46,15 @@ def search_agent(
     ``search_results``.
 
     Args:
-        lm_config: LM settings for constructed agents. Defaults to
-            ``SEARCH_LM_CONFIG`` (env-overridable defaults at import time).
+        lm_config: LM settings for constructed agents. Defaults to the
+            ``search-search`` role from ``config/lm.yaml``.
 
     Parameter name on the returned callable is ``data`` to match the
     ``Agent`` protocol. Prefer ``paper_search_workflow()`` as the MLflow
     ``predict_fn`` — eval rows use the ``query`` key, which matches the
     workflow's ``__call__``.
     """
-    config = SEARCH_LM_CONFIG if lm_config is None else lm_config
+    config = lm_config if lm_config is not None else load_lm_config(ROLE_SEARCH_SEARCH)
     literature_search = LiteratureSearch()
 
     async def run(data: ResearchQuery) -> list[PaperInfo]:
@@ -85,9 +68,11 @@ def reranker(*, lm_config: LMConfig | None = None) -> Reranker:
     """Reranker for relevance scoring and the search workflow.
 
     Args:
-        lm_config: Reranker LM settings. Defaults to ``RERANK_LM_CONFIG``.
+        lm_config: Reranker LM settings. Defaults to the
+            ``search-rerank`` role from ``config/lm.yaml``.
     """
-    return Reranker(RERANK_LM_CONFIG if lm_config is None else lm_config)
+    config = lm_config if lm_config is not None else load_lm_config(ROLE_SEARCH_RERANK)
+    return Reranker(config)
 
 
 def paper_search_workflow(

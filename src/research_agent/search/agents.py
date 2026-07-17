@@ -87,6 +87,7 @@ class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
             model=lm_config.model,
             api_key=lm_config.api_key,
             api_base=str(lm_config.base_url) if lm_config.base_url else None,
+            extra_body=lm_config.provider_config,
         )
         self._session = session
         indexed_search = IndexedLiteratureSearch(session, literature_search)
@@ -155,6 +156,7 @@ class Reranker(Agent[tuple[ResearchQuery, list[PaperInfo]], list[PaperInfo]]):
         self._api_base = (
             str(reranker_config.base_url) if reranker_config.base_url else None
         )
+        self._provider_config = reranker_config.provider_config
 
     async def __call__(
         self, data: tuple[ResearchQuery, list[PaperInfo]]
@@ -181,5 +183,6 @@ class Reranker(Agent[tuple[ResearchQuery, list[PaperInfo]], list[PaperInfo]]):
             api_base=self._api_base,
             query=query_text,
             documents=docs,
+            extra_body=self._provider_config,
         )
         return ranking.results

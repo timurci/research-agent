@@ -2,35 +2,27 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
-from pydantic import HttpUrl
 
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.lm_config import (
+    ROLE_SEARCH_RERANK,
+    ROLE_SEARCH_SEARCH,
+    lm_config,
+)
 
-SEARCH_MODEL: str = "openai/Qwen3.5-4B"
-SEARCH_API_KEY: str = "ignored-auth-key"
-SEARCH_BASE_URL: str = "http://localhost:8080/v1"
-
-RERANK_MODEL: str = "infinity/LFM2.5-ColBERT-350M"
-RERANK_API_KEY: str = "ignored-auth-key"
-RERANK_BASE_URL: str = "http://localhost:8080/v1"
+if TYPE_CHECKING:
+    from research_agent.shared.agent import LMConfig
 
 
 @pytest.fixture
 def search_lm_config() -> LMConfig:
-    """LMConfig pointing at the local search model."""
-    return LMConfig(
-        model=SEARCH_MODEL,
-        api_key=SEARCH_API_KEY,
-        base_url=HttpUrl(SEARCH_BASE_URL),
-    )
+    """LMConfig for the live search model (``search-search`` role)."""
+    return lm_config(ROLE_SEARCH_SEARCH)
 
 
 @pytest.fixture
 def reranker_lm_config() -> LMConfig:
-    """LMConfig pointing at the local rerank model."""
-    return LMConfig(
-        model=RERANK_MODEL,
-        api_key=RERANK_API_KEY,
-        base_url=HttpUrl(RERANK_BASE_URL),
-    )
+    """LMConfig for the live rerank model (``search-rerank`` role)."""
+    return lm_config(ROLE_SEARCH_RERANK)

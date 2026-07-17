@@ -3,7 +3,7 @@
 Layer: Application.
 """
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from openai import BaseModel
 from pydantic import ConfigDict, HttpUrl
@@ -21,6 +21,10 @@ class LMConfig(BaseModel):
     """Language model configuration.
 
     Assuming LiteLLM conventions in model names.
+
+    ``provider_config`` is an optional provider-specific request body
+    (for example OpenRouter routing). Infrastructure adapters forward it
+    to LiteLLM as ``extra_body``.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -28,3 +32,4 @@ class LMConfig(BaseModel):
     model: str
     api_key: str | None = None
     base_url: HttpUrl | None = None
+    provider_config: dict[str, Any] | None = None

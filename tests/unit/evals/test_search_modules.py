@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from pydantic import HttpUrl
 
 from evals.search.agents import search_agent
-from evals.search.modules import MODULES, as_query_predict_fn, query_module
+from evals.search.modules import (
+    MODULE_NAMES,
+    as_query_predict_fn,
+    build_modules,
+    query_module,
+)
 from evals.search.scorers import search_query_scorers
 from research_agent.search.models import PaperInfo, ResearchQuery
+from research_agent.shared.agent import LMConfig
 
 _ABSTRACT = (
     "A sufficiently long abstract describing the research methodology, "
@@ -16,16 +24,58 @@ _ABSTRACT = (
     "to satisfy the PaperInfo min_length=200 invariant enforced by Pydantic."
 )
 
+_SEARCH = LMConfig(model="openai/test-search")
+_RERANK = LMConfig(model="infinity/test-rerank")
 
-def test_search_modules_registry() -> None:
-    assert set(MODULES) == {"search", "search-e2e"}
-    for name, module in MODULES.items():
+
+def test_module_names() -> None:
+    assert frozenset({"search", "search-e2e"}) == MODULE_NAMES
+
+
+def test_build_modules_names_and_factories() -> None:
+    modules = build_modules(
+        search_lm_config=_SEARCH,
+        rerank_lm_config=_RERANK,
+    )
+    assert set(modules) == MODULE_NAMES
+    for name, module in modules.items():
         assert module.name == name
-        assert module.build_scorers is search_query_scorers
+        assert callable(module.load_data)
+        assert callable(module.build_predict_fn)
+        assert callable(module.build_scorers)
+
+
+def test_build_modules_injects_lm_configs() -> None:
+    modules = build_modules(
+        search_lm_config=_SEARCH,
+        rerank_lm_config=_RERANK,
+    )
+    with (
+        patch("evals.search.modules.search_agent") as search_factory,
+        patch("evals.search.modules.paper_search_workflow") as workflow_factory,
+        patch("evals.search.modules.search_query_scorers") as scorers_factory,
+    ):
+        search_factory.return_value = object()
+        workflow_factory.return_value = object()
+        scorers_factory.return_value = ()
+
+        modules["search"].build_predict_fn()
+        modules["search"].build_scorers()
+        modules["search-e2e"].build_predict_fn()
+        modules["search-e2e"].build_scorers()
+
+    search_factory.assert_called_once_with(lm_config=_SEARCH)
+    workflow_factory.assert_called_once_with(
+        search_lm_config=_SEARCH,
+        rerank_lm_config=_RERANK,
+    )
+    assert scorers_factory.call_count == 2
+    for call in scorers_factory.call_args_list:
+        assert call.kwargs == {"lm_config": _RERANK}
 
 
 def test_query_module_binds_name() -> None:
-    module = query_module("custom", search_agent)
+    module = query_module("custom", lambda: search_agent(lm_config=_SEARCH))
     assert module.name == "custom"
     assert callable(module.build_predict_fn)
     assert module.build_scorers is search_query_scorers

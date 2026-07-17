@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Operating manual for AI coding agents. Exact commands and file-level rules; architectural *why* is in [`docs/architecture.md`](docs/architecture.md).
+Operating manual for AI coding agents. Exact commands and file-level rules; architectural _why_ is in [`docs/architecture.md`](docs/architecture.md).
 
 ## Project overview
 
@@ -93,6 +93,7 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 - `src/datagen` — synthetic queries → `data/datagen/output/queries_train.jsonl` via `uv run generate-queries`.
 - `src/optimize` — DSPy optimization against live indexes; unfinished until `research_agent.search.program` exists (`NotImplementedError` is intentional).
 - `src/evals` — MLflow scorer adapters + eval agent factories; run suites with `uv run -m evals.main --list` / `uv run -m evals.main --experiment NAME search-e2e search`.
+- LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.lm_config` (Infrastructure). Roles `search-search` and `search-rerank` are `LMConfig` field maps.
 - Do not commit under `data/**/output/` except `.gitkeep`.
 
 ## What NOT to do

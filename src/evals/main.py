@@ -5,24 +5,34 @@ Usage::
     uv run -m evals.main --list
     uv run -m evals.main --experiment my-exp search-e2e search
     uv run -m evals.main --experiment my-exp --tracking-uri ./mlruns search-e2e
+    uv run -m evals.main --experiment my-exp --config config/lm.yaml search
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import mlflow
 
-from evals.search.modules import MODULES as SEARCH_MODULES
+from evals.search.modules import MODULE_NAMES, build_modules
+from research_agent.shared.lm_config import (
+    DEFAULT_LM_CONFIG_PATH,
+    ROLE_SEARCH_RERANK,
+    ROLE_SEARCH_SEARCH,
+    UnknownLMConfigRoleError,
+    load_lm_configs,
+)
+
+__all__ = ["MODULE_NAMES", "main"]
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from evals.harness import EvalModule
-
-MODULES = {**SEARCH_MODULES}
+    from research_agent.shared.agent import LMConfig
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -33,7 +43,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "modules",
         nargs="*",
-        choices=sorted(MODULES),
+        choices=sorted(MODULE_NAMES),
         help="One or more evaluation modules to run (required unless --list).",
     )
     parser.add_argument(
@@ -47,12 +57,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="MLflow tracking URI (default: MLflow file-store default).",
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_LM_CONFIG_PATH,
+        help=(
+            "YAML LM config path with search-search and search-rerank "
+            f"roles (default: {DEFAULT_LM_CONFIG_PATH})."
+        ),
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         dest="list_modules",
         help="Print registered module names and exit.",
     )
     return parser
+
+
+def _require_role(configs: dict[str, LMConfig], role: str, path: Path) -> LMConfig:
+    """Return ``configs[role]`` or raise with a clear message."""
+    try:
+        return configs[role]
+    except KeyError:
+        msg = (
+            f"unknown LM config role {role!r} in {path}; "
+            f"known roles: {sorted(configs)!r}"
+        )
+        raise UnknownLMConfigRoleError(msg) from None
 
 
 def _run_module(module: EvalModule) -> None:
@@ -81,7 +112,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.list_modules:
-        for name in sorted(MODULES):
+        for name in sorted(MODULE_NAMES):
             print(name)  # noqa: T201  # CLI status output, not logging
         return
 
@@ -90,6 +121,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     if not args.modules:
         parser.error("at least one module is required (or pass --list)")
 
+    configs = load_lm_configs(args.config)
+    modules = build_modules(
+        search_lm_config=_require_role(configs, ROLE_SEARCH_SEARCH, args.config),
+        rerank_lm_config=_require_role(configs, ROLE_SEARCH_RERANK, args.config),
+    )
+
     if args.tracking_uri is not None:
         mlflow.set_tracking_uri(args.tracking_uri)
     mlflow.set_experiment(args.experiment)
@@ -97,7 +134,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     mlflow.litellm.autolog()
 
     for name in args.modules:
-        _run_module(MODULES[name])
+        _run_module(modules[name])
 
 
 if __name__ == "__main__":

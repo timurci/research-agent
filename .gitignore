@@ -23,3 +23,6 @@ data/**/output/*
 .opencode
 .pi
 .agents
+
+# MLflow generated files
+mlflow.db

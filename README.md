@@ -1,40 +1,26 @@
 # research-agent
 
-A research assistant for scientific literature discovery.
+A research assistant optimized to run locally on small language models (SLMs).
 
-Currently the system focuses on a single capability — turning a research question
-into a list of relevant papers — by building and optimizing an AI-powered search
-capability. More capabilities will follow in later iterations.
+The goal is a capable literature assistant you can run on your own hardware — without relying on large cloud models for every step.
 
-See [docs/architecture.md](docs/architecture.md) for the architecture and design
-decisions.
+## Current focus: enhanced search
 
-## Current focus
+We are building and improving an **enhanced search** capability for scientific literature.
 
-The iteration centers on the **search capability**: it takes a
-`ResearchQuery` and returns a list of `PaperInfo` by delegating to a
-language model through the `Agent` port.
+Given a research question, the agent:
 
-```
-ResearchQuery
-     │
-     ▼
-search capability   (LLM via the Agent port)
-     │
-     ▼
-list[PaperInfo]
-```
+1. **Generates** better search queries from your question
+2. **Searches** multiple scholarly indexes in parallel
+3. **Refines** results by iterating — trying new queries, dropping dead ends, and improving what it finds through a ReAct-style loop
 
-A **query generation utility** is already in place and produces the
-training set used to optimize the search prompt via DSPy: a varied set of
-`ResearchQuery` objects spanning scientific domains, intents, and specificity levels.
+That loop is the core idea: not a single-shot keyword lookup, but an agent that keeps searching until it has a strong set of papers.
 
-The capability is then **optimized** by running it live against the
-configured indexes (arXiv, PubMed, CrossRef) and
-scoring the returned `list[PaperInfo]` against the original query with
-an embedding-similarity metric that rewards both high average
-relevance and a high relevance floor, so padding the list with
-irrelevant abstracts is not a viable strategy.
+This is the feature under active development. More research capabilities will follow later.
+
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for design decisions and how the system is structured.
 
 ## Quick start
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -163,6 +164,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     mlflow.set_experiment(args.experiment)
     mlflow.dspy.autolog()
     mlflow.litellm.autolog()
+
+    skip_key = "MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION"
+    if os.environ.setdefault(skip_key, "true") == "true":
+        logger.info(
+            "Skipping MLflow predict_fn trace validation (%s=true); "
+            "predict_fn is already @mlflow.trace'd",
+            skip_key,
+        )
 
     for name in args.modules:
         _run_module(modules[name], seed=args.seed)

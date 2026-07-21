@@ -22,8 +22,7 @@ from research_agent.shared.lm_config import (
     DEFAULT_LM_CONFIG_PATH,
     ROLE_SEARCH_RERANK,
     ROLE_SEARCH_SEARCH,
-    UnknownLMConfigRoleError,
-    load_lm_configs,
+    lm_config,
 )
 
 __all__ = ["MODULE_NAMES", "main"]
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from evals.harness import EvalModule
-    from research_agent.shared.agent import LMConfig
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -74,18 +72,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _require_role(configs: dict[str, LMConfig], role: str, path: Path) -> LMConfig:
-    """Return ``configs[role]`` or raise with a clear message."""
-    try:
-        return configs[role]
-    except KeyError:
-        msg = (
-            f"unknown LM config role {role!r} in {path}; "
-            f"known roles: {sorted(configs)!r}"
-        )
-        raise UnknownLMConfigRoleError(msg) from None
-
-
 def _run_module(module: EvalModule) -> None:
     """Load data, build predict_fn/scorers, and call ``mlflow.genai.evaluate``."""
     data = module.load_data()
@@ -121,10 +107,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     if not args.modules:
         parser.error("at least one module is required (or pass --list)")
 
-    configs = load_lm_configs(args.config)
     modules = build_modules(
-        search_lm_config=_require_role(configs, ROLE_SEARCH_SEARCH, args.config),
-        rerank_lm_config=_require_role(configs, ROLE_SEARCH_RERANK, args.config),
+        search_lm_config=lm_config(ROLE_SEARCH_SEARCH, path=args.config),
+        rerank_lm_config=lm_config(ROLE_SEARCH_RERANK, path=args.config),
     )
 
     if args.tracking_uri is not None:

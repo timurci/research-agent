@@ -41,9 +41,7 @@ def as_query_predict_fn(
     async def predict_fn(
         query: ResearchQuery | Mapping[str, Any],
     ) -> list[PaperInfo]:
-        if isinstance(query, ResearchQuery):
-            return await agent(query)
-        return await agent(ResearchQuery.model_validate(dict(query)))
+        return await agent(ResearchQuery.model_validate(query))
 
     return predict_fn
 

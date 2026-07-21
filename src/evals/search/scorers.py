@@ -19,10 +19,10 @@ Domain metric logic is not reimplemented here.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 from typing import TYPE_CHECKING, Protocol
 
 from mlflow.genai.scorers import scorer
+from pydantic import TypeAdapter, ValidationError
 
 from evals.feedback import code_assessment_source, evaluation_score_to_feedback
 from evals.search.agents import reranker
@@ -59,23 +59,16 @@ class _RelevanceLabeler(Protocol):
         ...
 
 
+_PAPER_LIST_ADAPTER: TypeAdapter[list[PaperInfo]] = TypeAdapter(list[PaperInfo])
+
+
 def _require_paper_list(outputs: object) -> list[PaperInfo]:
     """Narrow scorer outputs to ``list[PaperInfo]``."""
-    if not isinstance(outputs, list):
-        msg = f"outputs must be list[PaperInfo], got {type(outputs).__name__}"
-        raise ScorerShapeError(msg)
-
-    papers: list[PaperInfo] = []
-    for index, item in enumerate(outputs):
-        if isinstance(item, PaperInfo):
-            papers.append(item)
-            continue
-        if isinstance(item, dict):
-            papers.append(PaperInfo.model_validate(item))
-            continue
-        msg = f"outputs[{index}] must be PaperInfo or dict, got {type(item).__name__}"
-        raise ScorerShapeError(msg)
-    return papers
+    try:
+        return _PAPER_LIST_ADAPTER.validate_python(outputs)
+    except ValidationError as exc:
+        msg = f"outputs must be list[PaperInfo]: {exc}"
+        raise ScorerShapeError(msg) from exc
 
 
 def research_query_from_inputs(inputs: object) -> ResearchQuery:
@@ -93,24 +86,19 @@ def research_query_from_inputs(inputs: object) -> ResearchQuery:
     Raises:
         ScorerShapeError: If ``inputs`` cannot be interpreted as a query.
     """
-    if isinstance(inputs, ResearchQuery):
-        return inputs
-    if not isinstance(inputs, dict):
-        msg = f"inputs must be ResearchQuery or dict, got {type(inputs).__name__}"
-        raise ScorerShapeError(msg)
-
-    row = {str(key): value for key, value in inputs.items()}
-    if "query" not in row:
-        msg = "inputs must include 'query'"
-        raise ScorerShapeError(msg)
-
-    value = row["query"]
-    if isinstance(value, ResearchQuery):
-        return value
-    if isinstance(value, dict):
-        return ResearchQuery.model_validate(value)
-    msg = f"inputs['query'] must be ResearchQuery or dict, got {type(value).__name__}"
-    raise ScorerShapeError(msg)
+    match inputs:
+        case {"query": query}:
+            payload = query
+        case dict():
+            msg = "inputs must include 'query'"
+            raise ScorerShapeError(msg)
+        case _:
+            payload = inputs
+    try:
+        return ResearchQuery.model_validate(payload)
+    except ValidationError as exc:
+        msg = f"inputs must be ResearchQuery or dict with 'query': {exc}"
+        raise ScorerShapeError(msg) from exc
 
 
 def relevance_metrics_from_ranking(
@@ -169,22 +157,12 @@ def relevance_metrics_from_ranking(
 
 
 def _run_coroutine[T](coro: Coroutine[object, object, T]) -> T:
-    """Run an async coroutine from a synchronous scorer.
+    """Run an async coroutine from a synchronous scorer via ``asyncio.run``.
 
-    Uses ``asyncio.run`` when no loop is running; otherwise runs the
-    coroutine in a fresh loop on a worker thread so MLflow's sync scorer
-    path still works if a loop is already active.
+    MLflow's scorer path is synchronous, so no event loop is running in
+    the calling thread.
     """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
-    def _run() -> T:
-        return asyncio.run(coro)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(_run).result()
+    return asyncio.run(coro)
 
 
 def _relevance_feedback(

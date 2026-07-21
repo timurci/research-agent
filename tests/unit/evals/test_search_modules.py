@@ -10,6 +10,8 @@ from pydantic import HttpUrl
 from evals.search.agents import search_agent
 from evals.search.modules import (
     MODULE_NAMES,
+    SEARCH_E2E_SAMPLE_LIMIT,
+    SEARCH_SAMPLE_LIMIT,
     as_query_predict_fn,
     build_modules,
     query_module,
@@ -43,6 +45,15 @@ def test_build_modules_names_and_factories() -> None:
         assert callable(module.load_data)
         assert callable(module.build_predict_fn)
         assert callable(module.build_scorers)
+
+
+def test_build_modules_sets_sample_limits() -> None:
+    modules = build_modules(
+        search_lm_config=_SEARCH,
+        rerank_lm_config=_RERANK,
+    )
+    assert modules["search"].sample_limit == SEARCH_SAMPLE_LIMIT
+    assert modules["search-e2e"].sample_limit == SEARCH_E2E_SAMPLE_LIMIT
 
 
 def test_build_modules_injects_lm_configs() -> None:

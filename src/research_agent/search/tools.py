@@ -2,19 +2,22 @@
 
 Layer: Infrastructure.
 
-Wraps synchronous SDKs for PubMed/NCBI and CrossRef and
-normalises every response into the domain ``PaperInfo`` shape.
-``LiteratureSearch`` dispatches to private per-index handlers.
-``IndexedLiteratureSearch`` composes a pure ``LiteratureSearch`` with a
-``Session``: it appends hits to ``search_results`` and returns full
-papers tagged with absolute list indices for LM selection.
+Wraps synchronous SDKs for PubMed/NCBI and CrossRef, and the OpenAlex
+REST API (async ``httpx``), and normalises every response into the
+domain ``PaperInfo`` shape.  ``LiteratureSearch`` dispatches to private
+per-index handlers.  ``IndexedLiteratureSearch`` composes a pure
+``LiteratureSearch`` with a ``Session``: it appends hits to
+``search_results`` and returns full papers tagged with absolute list
+indices for LM selection.
 """
 
 from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Any, Protocol
+from urllib.parse import urlencode
 
+import httpx
 from Bio import Entrez
 from habanero import Crossref
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -31,9 +34,13 @@ if TYPE_CHECKING:
 
 _MAX_LIMIT: int = 100
 _MIN_LIMIT: int = 1
+_OPENALEX_MAX_PER_PAGE: int = 100
 
 _DEFAULT_MAILTO: str = "research-agent@example.com"
 _STRIP_JATS = re.compile(r"<[^>]+>")
+_DOI_URL_PREFIX: str = "https://doi.org/"
+_OPENALEX_WORKS_URL: str = "https://api.openalex.org/works"
+_OPENALEX_TIMEOUT_SECONDS: float = 30.0
 
 SEARCH_RESULTS_KEY: str = "search_results"
 
@@ -284,11 +291,176 @@ class _CrossRefSearch:
         )
 
 
+class _OpenAlexSearch:
+    """Search OpenAlex for works matching a free-text keyword query.
+
+    Uses the async OpenAlex Works API (``GET /works?search=...``).
+    Keyword search costs about $0.001 per call on the freemium plan;
+    a free API key yields about $1/day (~1k searches). Peak RPS can
+    reach 100; daily budget usually binds first for AI eval suites.
+    The API key is constructor-injected only — never loaded from the
+    environment here.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        mailto: str = _DEFAULT_MAILTO,
+    ) -> None:
+        """Initialise the OpenAlex search tool.
+
+        Args:
+            api_key: Optional OpenAlex API key.  Callers obtain and inject
+                it; this handler never reads the environment.  ``None``
+                uses the unauthenticated free tier.
+            mailto: Contact address sent as the polite ``mailto`` query
+                parameter.
+        """
+        self._api_key = api_key
+        self._mailto = mailto
+
+    async def __call__(self, query: str, *, limit: int) -> list[PaperInfo]:
+        """Search OpenAlex for works matching a free-text query.
+
+        Args:
+            query: Plain-text keyword search query.
+            limit: Maximum number of results to return (clamped to 1-100).
+
+        Returns:
+            A list of normalised ``PaperInfo`` objects. May be shorter
+            than *limit* (or empty) when the API returns fewer matches,
+            or when matched records lack title, abstract, or authors
+            (silently dropped here).
+        """
+        clamped = max(_MIN_LIMIT, min(limit, _OPENALEX_MAX_PER_PAGE))
+        works = await self._fetch_works(query, per_page=clamped)
+        works = [w for w in works if _OpenAlexSearch._is_complete(w)]
+        return [_OpenAlexSearch._to_paper_info(w) for w in works]
+
+    async def _fetch_works(self, query: str, *, per_page: int) -> list[dict[str, Any]]:
+        """Fetch raw work dicts from the OpenAlex Works search endpoint."""
+        params: dict[str, str | int] = {
+            "search": query,
+            "filter": "has_abstract:true",
+            "per_page": per_page,
+            "mailto": self._mailto,
+        }
+        if self._api_key is not None:
+            params["api_key"] = self._api_key
+        url = f"{_OPENALEX_WORKS_URL}?{urlencode(params)}"
+        async with httpx.AsyncClient(timeout=_OPENALEX_TIMEOUT_SECONDS) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+        if not isinstance(payload, dict):
+            msg = f"OpenAlex returned unexpected type {type(payload).__name__}"
+            raise TypeError(msg)
+        results = payload.get("results", [])
+        if not isinstance(results, list):
+            msg = "OpenAlex response 'results' must be a list"
+            raise TypeError(msg)
+        return results
+
+    @staticmethod
+    def _reconstruct_abstract(inverted: dict[str, list[int]] | None) -> str:
+        """Rebuild plain-text abstract from an OpenAlex inverted index."""
+        if not inverted:
+            return ""
+        by_pos: dict[int, str] = {}
+        for token, positions in inverted.items():
+            for pos in positions:
+                by_pos[pos] = token
+        return " ".join(by_pos[i] for i in sorted(by_pos))
+
+    @staticmethod
+    def _is_complete(work: dict[str, Any]) -> bool:
+        title = str(work.get("display_name") or "").strip()
+        abstract = _OpenAlexSearch._reconstruct_abstract(
+            work.get("abstract_inverted_index")
+        )
+        authors = _OpenAlexSearch._author_names(work)
+        return bool(title) and bool(abstract) and bool(authors)
+
+    @staticmethod
+    def _author_names(work: dict[str, Any]) -> list[str]:
+        names: list[str] = []
+        for authorship in work.get("authorships") or []:
+            author = authorship.get("author") or {}
+            name = str(author.get("display_name") or "").strip()
+            if name:
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _pdf_url(work: dict[str, Any]) -> str | None:
+        best = work.get("best_oa_location") or {}
+        pdf = best.get("pdf_url")
+        if pdf:
+            return str(pdf)
+        for location in work.get("locations") or []:
+            loc_pdf = location.get("pdf_url")
+            if loc_pdf:
+                return str(loc_pdf)
+        return None
+
+    @staticmethod
+    def _resolve_url(work: dict[str, Any], doi: str | None) -> str:
+        primary = work.get("primary_location") or {}
+        landing = primary.get("landing_page_url")
+        if landing:
+            return str(landing)
+        if doi:
+            return f"{_DOI_URL_PREFIX}{doi}"
+        openalex_id = work.get("id")
+        if openalex_id:
+            return str(openalex_id)
+        return ""
+
+    @staticmethod
+    def _normalise_doi(raw: str | None) -> str | None:
+        if not raw:
+            return None
+        doi = str(raw).strip()
+        if doi.startswith(_DOI_URL_PREFIX):
+            doi = doi.removeprefix(_DOI_URL_PREFIX)
+        return doi or None
+
+    @staticmethod
+    def _to_paper_info(work: dict[str, Any]) -> PaperInfo:
+        title = str(work.get("display_name") or "").strip()
+        abstract = _OpenAlexSearch._reconstruct_abstract(
+            work.get("abstract_inverted_index")
+        )
+        authors = _OpenAlexSearch._author_names(work)
+        doi = _OpenAlexSearch._normalise_doi(work.get("doi"))
+        url = _OpenAlexSearch._resolve_url(work, doi)
+        pdf_raw = _OpenAlexSearch._pdf_url(work)
+        pdf_url = HttpUrl(pdf_raw) if pdf_raw else None
+        year = work.get("publication_year")
+        publication_year = int(year) if year is not None else None
+        citation_count = work.get("cited_by_count")
+        if citation_count is not None:
+            citation_count = int(citation_count)
+
+        return PaperInfo(
+            title=title,
+            abstract=abstract,
+            authors=tuple(authors),
+            url=HttpUrl(_require_url(url, context="OpenAlex")),
+            open_access=pdf_url is not None,
+            doi=doi,
+            pdf_url=pdf_url,
+            publication_year=publication_year,
+            citation_count=citation_count,
+        )
+
+
 class LiteratureSearch:
     """Pure literature index dispatcher (not the ReAct tool).
 
-    Routes each call to one private PubMed or CrossRef handler via
-    *search_index*.  Does not touch session state.
+    Routes each call to one private PubMed, CrossRef, or OpenAlex
+    handler via *search_index*.  Does not touch session state.
 
     The ReAct-facing tool is ``IndexedLiteratureSearch``, which the search
     agent wraps in ``dspy.Tool`` under the name ``LiteratureSearch``.
@@ -299,6 +471,7 @@ class LiteratureSearch:
         self,
         *,
         pubmed_api_key: str | None = None,
+        openalex_api_key: str | None = None,
     ) -> None:
         """Initialise the unified search tool and its private index handlers.
 
@@ -306,10 +479,14 @@ class LiteratureSearch:
             pubmed_api_key: Optional NCBI API key forwarded to the
                 private PubMed handler for elevated rate limits
                 (10 req/s vs ~3 req/s unauthenticated).
+            openalex_api_key: Optional OpenAlex API key forwarded to the
+                private OpenAlex handler.  Injected by the caller; never
+                loaded from the environment inside this class.
         """
         self._handlers: dict[SearchIndexType, _IndexSearch] = {
             SearchIndexType.PUBMED: _PubMedSearch(api_key=pubmed_api_key),
             SearchIndexType.CROSSREF: _CrossRefSearch(),
+            SearchIndexType.OPENALEX: _OpenAlexSearch(api_key=openalex_api_key),
         }
 
     async def __call__(
@@ -323,7 +500,8 @@ class LiteratureSearch:
 
         Args:
             search_index: Which index to query.  One of the
-                ``SearchIndexType`` enum values (PubMed, CrossRef).
+                ``SearchIndexType`` enum values (PubMed, CrossRef,
+                OpenAlex).
             query: Plain-text search query.  Query syntax is delegated to
                 the chosen index's handler.
             limit: Maximum number of results to return.  Required; each
@@ -346,7 +524,7 @@ class LiteratureSearch:
 
 
 class _IndexSearch(Protocol):
-    """Structural shape satisfied by the three private index handlers.
+    """Structural shape satisfied by the private index handlers.
 
     Local to this module and not exported.  ``LiteratureSearch`` only
     relies on the ``async __call__(query, *, limit) -> list[PaperInfo]``
@@ -399,7 +577,8 @@ class IndexedLiteratureSearch:
 
         Args:
             search_index: Which index to query.  One of the
-                ``SearchIndexType`` enum values (PubMed, CrossRef).
+                ``SearchIndexType`` enum values (PubMed, CrossRef,
+                OpenAlex).
             query: Plain-text search query.  Query syntax is delegated to
                 the chosen index's handler.
             limit: Maximum number of results to return.  Required; each

@@ -51,7 +51,7 @@ class _RelevanceScore(TypedDict):
 class SearchAgentSignature(dspy.Signature):
     """Search literature for a research query.
 
-    Use the LiteratureSearch tool to query PubMed or CrossRef.
+    Use the LiteratureSearch tool to query PubMed, CrossRef, or OpenAlex.
     After gathering results, set selected_ids to the integer ids from tool
     observations that best answer the research query (most relevant first).
     Do not invent ids; only use ids returned by LiteratureSearch.

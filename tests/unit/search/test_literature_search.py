@@ -8,13 +8,15 @@ classes (``_PubMedSearch``, ``_CrossRefSearch``) are not imported here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from Bio import Entrez
 from habanero import Crossref
 
+from research_agent.search import tools as tools_mod
 from research_agent.search.models import SearchIndexType
 from research_agent.search.tools import LiteratureSearch
 
@@ -33,17 +35,20 @@ def _noop_init(_self: object, **_kwargs: object) -> None:
 # --- Init ---
 
 
-def test_init_wires_two_handlers() -> None:
+def test_init_wires_three_handlers() -> None:
     tool = LiteratureSearch()
 
     pubmed = tool._handlers[SearchIndexType.PUBMED]
     crossref = tool._handlers[SearchIndexType.CROSSREF]
+    openalex = tool._handlers[SearchIndexType.OPENALEX]
 
     assert pubmed is not None
     assert crossref is not None
+    assert openalex is not None
     assert set(tool._handlers) == {
         SearchIndexType.PUBMED,
         SearchIndexType.CROSSREF,
+        SearchIndexType.OPENALEX,
     }
 
 
@@ -423,3 +428,296 @@ async def test_crossref_drops_records_missing_title_or_abstract(
 
     assert len(out) == 1
     assert out[0].doi == good["DOI"]
+
+
+# --- OpenAlex ---
+
+
+def _invert_abstract(text: str) -> dict[str, list[int]]:
+    inverted: dict[str, list[int]] = {}
+    for index, token in enumerate(text.split()):
+        inverted.setdefault(token, []).append(index)
+    return inverted
+
+
+def _make_openalex_work(  # noqa: PLR0913  # test helper mirroring OpenAlex work shape
+    *,
+    title: str = _TITLE,
+    abstract: str = _ABSTRACT,
+    authors: list[str] | None = None,
+    doi: str = "https://doi.org/10.1234/openalex-test",
+    year: int = 2021,
+    citation_count: int = 42,
+    landing_page_url: str = "https://example.com/paper",
+    pdf_url: str = "",
+    openalex_id: str = "https://openalex.org/W123",
+) -> dict[str, Any]:
+    author_names = authors if authors is not None else ["Alice Smith"]
+    return {
+        "id": openalex_id,
+        "display_name": title,
+        "abstract_inverted_index": _invert_abstract(abstract) if abstract else None,
+        "authorships": [{"author": {"display_name": name}} for name in author_names],
+        "doi": doi,
+        "publication_year": year,
+        "cited_by_count": citation_count,
+        "primary_location": {"landing_page_url": landing_page_url, "pdf_url": None},
+        "best_oa_location": {"pdf_url": pdf_url or None, "landing_page_url": None},
+        "locations": [],
+        "open_access": {"is_oa": bool(pdf_url)},
+    }
+
+
+def _stub_openalex(
+    monkeypatch: pytest.MonkeyPatch,
+    works: list[dict[str, Any]],
+    *,
+    capture: dict[str, Any] | None = None,
+) -> None:
+    async def fake_fetch(
+        self: object, query: str, *, per_page: int
+    ) -> list[dict[str, Any]]:
+        if capture is not None:
+            capture["query"] = query
+            capture["per_page"] = per_page
+            capture["api_key"] = getattr(self, "_api_key", None)
+        return works
+
+    monkeypatch.setattr(tools_mod._OpenAlexSearch, "_fetch_works", fake_fetch)
+
+
+@pytest.mark.asyncio
+async def test_openalex_reconstructs_inverted_abstract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work = _make_openalex_work()
+    _stub_openalex(monkeypatch, [work])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+    assert len(out) == 1
+    assert out[0].abstract == _ABSTRACT
+    assert out[0].title == _TITLE
+    assert out[0].authors == ("Alice Smith",)
+    assert out[0].doi == "10.1234/openalex-test"
+    assert out[0].publication_year == 2021
+    assert out[0].citation_count == 42
+    assert str(out[0].url) == "https://example.com/paper"
+
+
+@pytest.mark.asyncio
+async def test_openalex_url_falls_back_to_doi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work = _make_openalex_work(landing_page_url="")
+    work["primary_location"] = {"landing_page_url": None, "pdf_url": None}
+    _stub_openalex(monkeypatch, [work])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+    assert len(out) == 1
+    assert str(out[0].url) == "https://doi.org/10.1234/openalex-test"
+
+
+@pytest.mark.asyncio
+async def test_openalex_url_falls_back_to_openalex_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work = _make_openalex_work(landing_page_url="", doi="")
+    work["primary_location"] = {"landing_page_url": None, "pdf_url": None}
+    work["doi"] = None
+    _stub_openalex(monkeypatch, [work])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+    assert len(out) == 1
+    assert str(out[0].url) == "https://openalex.org/W123"
+
+
+@pytest.mark.asyncio
+async def test_openalex_raises_when_no_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work = _make_openalex_work(landing_page_url="", doi="", openalex_id="")
+    work["primary_location"] = {"landing_page_url": None, "pdf_url": None}
+    work["doi"] = None
+    work["id"] = None
+    _stub_openalex(monkeypatch, [work])
+
+    tool = LiteratureSearch()
+    with pytest.raises(ValueError, match="OpenAlex"):
+        await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+
+@pytest.mark.asyncio
+async def test_openalex_open_access_only_with_pdf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with_pdf = _make_openalex_work(pdf_url="https://example.com/paper.pdf")
+    without_pdf = _make_openalex_work(
+        title="Another Long Enough Paper Title Here",
+        pdf_url="",
+    )
+    without_pdf["open_access"] = {"is_oa": True}
+    _stub_openalex(monkeypatch, [with_pdf, without_pdf])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+    assert len(out) == 2
+    assert out[0].open_access is True
+    assert out[0].pdf_url is not None
+    assert "paper.pdf" in str(out[0].pdf_url)
+    assert out[1].open_access is False
+    assert out[1].pdf_url is None
+
+
+@pytest.mark.asyncio
+async def test_openalex_drops_incomplete_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    no_title = _make_openalex_work(title="")
+    no_abstract = _make_openalex_work(abstract="")
+    no_authors = _make_openalex_work(authors=[])
+    good = _make_openalex_work()
+    _stub_openalex(monkeypatch, [no_title, no_abstract, no_authors, good])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+    assert len(out) == 1
+    assert out[0].title == _TITLE
+
+
+@pytest.mark.asyncio
+async def test_openalex_empty_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_openalex(monkeypatch, [])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.OPENALEX, "nothing", limit=5)
+
+    assert out == []
+
+
+@pytest.mark.asyncio
+async def test_openalex_clamps_limit_and_forwards_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture: dict[str, Any] = {}
+    _stub_openalex(monkeypatch, [_make_openalex_work()], capture=capture)
+
+    tool = LiteratureSearch(openalex_api_key="test-key")
+    await tool(SearchIndexType.OPENALEX, "crispr", limit=500)
+
+    assert capture["query"] == "crispr"
+    assert capture["per_page"] == 100
+    assert capture["api_key"] == "test-key"
+
+
+@pytest.mark.asyncio
+async def test_openalex_omits_api_key_when_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture: dict[str, Any] = {}
+    _stub_openalex(monkeypatch, [_make_openalex_work()], capture=capture)
+
+    tool = LiteratureSearch()
+    await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+    assert capture["api_key"] is None
+
+
+@pytest.mark.asyncio
+async def test_openalex_raises_on_unexpected_payload_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def bad_fetch(
+        self: object, query: str, *, per_page: int
+    ) -> list[dict[str, Any]]:
+        del self, query, per_page
+        msg = "OpenAlex returned unexpected type list"
+        raise TypeError(msg)
+
+    monkeypatch.setattr(tools_mod._OpenAlexSearch, "_fetch_works", bad_fetch)
+
+    tool = LiteratureSearch()
+    with pytest.raises(TypeError, match="OpenAlex returned unexpected type"):
+        await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+
+@pytest.mark.asyncio
+async def test_openalex_pdf_from_locations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work = _make_openalex_work(pdf_url="")
+    work["best_oa_location"] = {"pdf_url": None}
+    work["locations"] = [{"pdf_url": "https://example.com/loc.pdf"}]
+    _stub_openalex(monkeypatch, [work])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+    assert len(out) == 1
+    assert out[0].open_access is True
+    assert "loc.pdf" in str(out[0].pdf_url)
+
+
+@pytest.mark.asyncio
+async def test_openalex_fetch_builds_query_and_raises_on_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise real ``_fetch_works`` via a mocked ``AsyncClient.get``."""
+    work = _make_openalex_work()
+    seen: dict[str, str] = {}
+
+    class _FakeResponse:
+        def __init__(self, *, status_code: int, payload: object) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                request = httpx.Request("GET", "https://api.openalex.org/works")
+                response = httpx.Response(self.status_code, request=request)
+                msg = "error"
+                raise httpx.HTTPStatusError(
+                    msg,
+                    request=request,
+                    response=response,
+                )
+
+        def json(self) -> object:
+            return self._payload
+
+    class _FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            del args
+
+        async def get(self, url: str) -> _FakeResponse:
+            seen["url"] = url
+            if "fail" in url:
+                return _FakeResponse(status_code=429, payload={"error": "rate"})
+            return _FakeResponse(status_code=200, payload={"results": [work]})
+
+    monkeypatch.setattr(tools_mod.httpx, "AsyncClient", _FakeClient)
+
+    tool = LiteratureSearch(openalex_api_key="secret")
+    out = await tool(SearchIndexType.OPENALEX, "crispr", limit=5)
+    assert len(out) == 1
+    assert "api_key=secret" in seen["url"]
+    assert "search=crispr" in seen["url"]
+    assert "has_abstract" in seen["url"]
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await tool(SearchIndexType.OPENALEX, "fail", limit=5)

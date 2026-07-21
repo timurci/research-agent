@@ -21,6 +21,7 @@ class SearchIndexType(StrEnum):
 
     PUBMED = "pubmed"
     CROSSREF = "crossref"
+    OPENALEX = "openalex"
 
 
 class PaperInfo(BaseModel):

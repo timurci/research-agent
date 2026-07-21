@@ -61,7 +61,7 @@ async def test_indexes_and_appends_across_calls() -> None:
     inner = _FakeLiteratureSearch([[paper_a, paper_b], [paper_c]])
     tool = IndexedLiteratureSearch(session, inner)
 
-    first = await tool(SearchIndexType.ARXIV, "q1", limit=5)
+    first = await tool(SearchIndexType.CROSSREF, "q1", limit=5)
     assert [item.id for item in first] == [0, 1]
     assert first[0].paper == paper_a
     assert first[1].paper == paper_b
@@ -73,7 +73,7 @@ async def test_indexes_and_appends_across_calls() -> None:
     bag = session.get(SEARCH_RESULTS_KEY)
     assert bag == [paper_a, paper_b, paper_c]
     assert inner.calls == [
-        (SearchIndexType.ARXIV, "q1", 5),
+        (SearchIndexType.CROSSREF, "q1", 5),
         (SearchIndexType.PUBMED, "q2", 5),
     ]
 
@@ -95,4 +95,4 @@ async def test_corrupt_bag_raises_invalid_session_state() -> None:
         _FakeLiteratureSearch([[_make_paper()]]),
     )
     with pytest.raises(InvalidSessionStateError, match="list"):
-        await tool(SearchIndexType.ARXIV, "q", limit=1)
+        await tool(SearchIndexType.PUBMED, "q", limit=1)

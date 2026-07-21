@@ -12,7 +12,6 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
-    "arxiv>=4.0.0",  # search index
     "biopython>=1.87",  # search index
     "dspy>=3.2.1",
     "habanero>=2.9.2",  # search index

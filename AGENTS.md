@@ -12,7 +12,7 @@ A research assistant for scientific literature discovery. The current capability
 - `pydantic` — domain models and invariants
 - `dspy` — LLM infrastructure (signatures, programs, optimizers, LiteLLM embeddings)
 - `mlflow` — AI evaluation (code-based scorers); dev dependency
-- `arxiv`, `biopython`, `habanero` — search-index clients
+- `biopython`, `habanero` — search-index clients
 - `uv` — package manager, runner, build backend
 - `ruff` — lint + format
 - `ty` — type checker

@@ -2,7 +2,7 @@
 
 Layer: Infrastructure.
 
-Wraps synchronous SDKs for arXiv, PubMed/NCBI, and CrossRef and
+Wraps synchronous SDKs for PubMed/NCBI and CrossRef and
 normalises every response into the domain ``PaperInfo`` shape.
 ``LiteratureSearch`` dispatches to private per-index handlers.
 ``IndexedLiteratureSearch`` composes a pure ``LiteratureSearch`` with a
@@ -15,7 +15,6 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Protocol
 
-import arxiv
 from Bio import Entrez
 from habanero import Crossref
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -55,87 +54,6 @@ def _require_url(value: str | None, *, context: str) -> str:
         msg = f"{context}: cannot normalise record without a URL"
         raise ValueError(msg)
     return value
-
-
-class _ArXivSearch:
-    """Search arXiv for academic papers matching a free-text query.
-
-    Returns paper metadata including title, abstract, authors, category
-    tags, and links to the abstract page and PDF.
-    """
-
-    def __init__(
-        self,
-        *,
-        page_size: int = 100,
-        delay_seconds: float = 3.0,
-        num_retries: int = 3,
-    ) -> None:
-        """Initialise the arXiv search tool.
-
-        Args:
-            page_size: Results fetched per API request (max 2000).
-            delay_seconds: Wait between consecutive API requests. arXiv
-                asks users to respect a 3-second delay.
-            num_retries: Number of times to retry a failing request.
-        """
-        self._page_size = page_size
-        self._delay_seconds = delay_seconds
-        self._num_retries = num_retries
-
-    async def __call__(self, query: str, *, limit: int) -> list[PaperInfo]:
-        """Search arXiv for papers matching a free-text query.
-
-        Args:
-            query: Plain-text search query. May include the same field
-                prefixes as the arXiv API (``ti:``, ``au:``, ``abs:``,
-                ``cat:``, ``all:``).
-            limit: Maximum number of results to return.
-
-        Returns:
-            A list of normalised ``PaperInfo`` objects, one per matched
-            paper. May be shorter than *limit* (or empty) when the API
-            returns fewer matches, or when matched records lack a title
-            or abstract (silently dropped here).
-        """
-        clamped = max(_MIN_LIMIT, min(limit, 2000))
-
-        def _search() -> list[arxiv.Result]:
-            client = arxiv.Client(
-                page_size=self._page_size,
-                delay_seconds=self._delay_seconds,
-                num_retries=self._num_retries,
-            )
-            search = arxiv.Search(query=query, max_results=clamped)
-            return list(client.results(search))
-
-        results = await run_async(_search)
-        results = [
-            r for r in results if (r.title or "").strip() and (r.summary or "").strip()
-        ]
-        return [self._to_paper_info(r) for r in results]
-
-    def _to_paper_info(self, result: arxiv.Result) -> PaperInfo:
-        pdf_url = result.pdf_url or next(
-            (link.href for link in (result.links or []) if link.title == "pdf"),
-            None,
-        )
-        resolved_pdf = HttpUrl(pdf_url) if pdf_url else None
-        return PaperInfo(
-            title=(result.title or "").strip(),
-            abstract=(result.summary or "").strip(),
-            authors=tuple(a.name for a in (result.authors or []) if a.name),
-            url=HttpUrl(_require_url(result.entry_id, context="arXiv")),
-            open_access=resolved_pdf is not None,
-            doi=result.doi or None,
-            pdf_url=resolved_pdf,
-            publication_year=(
-                result.published.year
-                if result.published and result.published.year > 1
-                else None
-            ),
-            citation_count=None,
-        )
 
 
 class _PubMedSearch:
@@ -369,8 +287,8 @@ class _CrossRefSearch:
 class LiteratureSearch:
     """Pure literature index dispatcher (not the ReAct tool).
 
-    Routes each call to one private arXiv, PubMed, or CrossRef handler
-    via *search_index*.  Does not touch session state.
+    Routes each call to one private PubMed or CrossRef handler via
+    *search_index*.  Does not touch session state.
 
     The ReAct-facing tool is ``IndexedLiteratureSearch``, which the search
     agent wraps in ``dspy.Tool`` under the name ``LiteratureSearch``.
@@ -390,7 +308,6 @@ class LiteratureSearch:
                 (10 req/s vs ~3 req/s unauthenticated).
         """
         self._handlers: dict[SearchIndexType, _IndexSearch] = {
-            SearchIndexType.ARXIV: _ArXivSearch(),
             SearchIndexType.PUBMED: _PubMedSearch(api_key=pubmed_api_key),
             SearchIndexType.CROSSREF: _CrossRefSearch(),
         }
@@ -406,7 +323,7 @@ class LiteratureSearch:
 
         Args:
             search_index: Which index to query.  One of the
-                ``SearchIndexType`` enum values (arXiv, PubMed, CrossRef).
+                ``SearchIndexType`` enum values (PubMed, CrossRef).
             query: Plain-text search query.  Query syntax is delegated to
                 the chosen index's handler.
             limit: Maximum number of results to return.  Required; each
@@ -482,7 +399,7 @@ class IndexedLiteratureSearch:
 
         Args:
             search_index: Which index to query.  One of the
-                ``SearchIndexType`` enum values (arXiv, PubMed, CrossRef).
+                ``SearchIndexType`` enum values (PubMed, CrossRef).
             query: Plain-text search query.  Query syntax is delegated to
                 the chosen index's handler.
             limit: Maximum number of results to return.  Required; each

@@ -19,7 +19,6 @@ class MissingOpenAccessPDFError(Exception):
 class SearchIndexType(StrEnum):
     """Supported literature search indexes for tool dispatch."""
 
-    ARXIV = "arxiv"
     PUBMED = "pubmed"
     CROSSREF = "crossref"
 

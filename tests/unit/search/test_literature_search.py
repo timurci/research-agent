@@ -1,19 +1,16 @@
 """Unit tests for the unified ``LiteratureSearch`` dispatcher.
 
 All tests go through the public ``LiteratureSearch`` class. Per-index
-upstream SDKs (``arxiv``, ``Bio.Entrez``, ``habanero.Crossref``) are
-stubbed at the boundary with ``monkeypatch``; the private per-index
-handler classes (``_ArXivSearch``, ``_PubMedSearch``, ``_CrossRefSearch``)
-are not imported here.
+upstream SDKs (``Bio.Entrez``, ``habanero.Crossref``) are stubbed at
+the boundary with ``monkeypatch``; the private per-index handler
+classes (``_PubMedSearch``, ``_CrossRefSearch``) are not imported here.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
-import arxiv
 import pytest
 from Bio import Entrez
 from habanero import Crossref
@@ -36,208 +33,18 @@ def _noop_init(_self: object, **_kwargs: object) -> None:
 # --- Init ---
 
 
-def test_init_wires_three_handlers() -> None:
+def test_init_wires_two_handlers() -> None:
     tool = LiteratureSearch()
 
-    arxiv_h = tool._handlers[SearchIndexType.ARXIV]
     pubmed = tool._handlers[SearchIndexType.PUBMED]
     crossref = tool._handlers[SearchIndexType.CROSSREF]
 
-    assert arxiv_h is not None
     assert pubmed is not None
     assert crossref is not None
-
-
-# --- arXiv ---
-
-
-def _make_arxiv_result(  # noqa: PLR0913  # test helper mirroring arxiv.Result constructor
-    *,
-    title: str = _TITLE,
-    summary: str = _ABSTRACT,
-    authors: list[arxiv.Result.Author] | None = None,
-    doi: str | None = None,
-    categories: list[str] | None = None,
-    pdf_link: str | None = None,
-    entry_id: str = "http://arxiv.org/abs/2306.04338v1",
-    journal_ref: str | None = None,
-    comment: str | None = None,
-    published: datetime | None = None,
-) -> arxiv.Result:
-    links: list[arxiv.Result.Link] = [
-        arxiv.Result.Link(
-            href=entry_id,
-            title=None,
-            rel="alternate",
-            content_type=None,
-        )
-    ]
-    if pdf_link:
-        links.append(
-            arxiv.Result.Link(
-                href=pdf_link,
-                title="pdf",
-                rel="related",
-                content_type="application/pdf",
-            )
-        )
-    return arxiv.Result(
-        entry_id=entry_id,
-        title=title,
-        summary=summary,
-        authors=authors if authors is not None else [arxiv.Result.Author(name="Alice")],
-        doi=doi or "",
-        categories=categories or [],
-        primary_category=(categories[0] if categories else ""),
-        journal_ref=journal_ref or "",
-        comment=comment or "",
-        links=links,
-        published=published or datetime(1, 1, 1, tzinfo=UTC),
-    )
-
-
-def _stub_arxiv(monkeypatch: pytest.MonkeyPatch, results: list[arxiv.Result]) -> None:
-    fake_client = MagicMock()
-    fake_client.results.return_value = iter(results)
-    monkeypatch.setattr(arxiv, "Client", lambda **_kwargs: fake_client)
-    monkeypatch.setattr(arxiv, "Search", lambda **_kwargs: object())
-
-
-@pytest.mark.asyncio
-async def test_arxiv_normalises_missing_doi(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _stub_arxiv(
-        monkeypatch,
-        [_make_arxiv_result(doi=None, authors=[arxiv.Result.Author(name="Alice")])],
-    )
-
-    tool = LiteratureSearch()
-    out = await tool(SearchIndexType.ARXIV, "q", limit=5)
-
-    assert len(out) == 1
-    assert out[0].doi is None
-
-
-@pytest.mark.asyncio
-async def test_arxiv_extracts_pdf_from_links_when_no_pdf_url(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result = _make_arxiv_result(authors=[arxiv.Result.Author(name="Alice")])
-    result.links = [
-        arxiv.Result.Link(
-            href="http://arxiv.org/abs/2306.04338v1",
-            title=None,
-            rel="alternate",
-            content_type=None,
-        ),
-        arxiv.Result.Link(
-            href="http://arxiv.org/pdf/2306.04338v1",
-            title="pdf",
-            rel="related",
-            content_type="application/pdf",
-        ),
-    ]
-    _stub_arxiv(monkeypatch, [result])
-
-    tool = LiteratureSearch()
-    out = await tool(SearchIndexType.ARXIV, "q", limit=5)
-
-    assert len(out) == 1
-    assert str(out[0].pdf_url) == "http://arxiv.org/pdf/2306.04338v1"
-
-
-@pytest.mark.asyncio
-async def test_arxiv_sentinel_year_is_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _stub_arxiv(
-        monkeypatch,
-        [
-            _make_arxiv_result(
-                authors=[arxiv.Result.Author(name="Alice")],
-                published=datetime(1, 1, 1, tzinfo=UTC),
-            ),
-        ],
-    )
-
-    tool = LiteratureSearch()
-    out = await tool(SearchIndexType.ARXIV, "q", limit=5)
-
-    assert len(out) == 1
-    assert out[0].publication_year is None
-
-
-@pytest.mark.asyncio
-async def test_arxiv_filters_none_author_names(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _stub_arxiv(
-        monkeypatch,
-        [
-            _make_arxiv_result(
-                authors=[
-                    arxiv.Result.Author(name="Alice"),
-                    arxiv.Result.Author(name=""),
-                    arxiv.Result.Author(name="Bob"),
-                ],
-            ),
-        ],
-    )
-
-    tool = LiteratureSearch()
-    out = await tool(SearchIndexType.ARXIV, "q", limit=5)
-
-    assert len(out) == 1
-    assert list(out[0].authors) == ["Alice", "Bob"]
-
-
-@pytest.mark.asyncio
-async def test_arxiv_coerces_empty_doi_to_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _stub_arxiv(
-        monkeypatch,
-        [
-            _make_arxiv_result(
-                doi="",
-                authors=[arxiv.Result.Author(name="Alice")],
-            ),
-        ],
-    )
-
-    tool = LiteratureSearch()
-    out = await tool(SearchIndexType.ARXIV, "q", limit=5)
-
-    assert len(out) == 1
-    assert out[0].doi is None
-
-
-@pytest.mark.asyncio
-async def test_arxiv_drops_records_missing_title_or_abstract(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bad = arxiv.Result(
-        entry_id="http://arxiv.org/abs/bad",
-        title="",
-        summary="",
-        authors=[arxiv.Result.Author(name="Alice")],
-        doi="",
-        categories=[],
-        primary_category="",
-        journal_ref="",
-        comment="",
-        links=[],
-        published=datetime(2024, 1, 1, tzinfo=UTC),
-    )
-    good = _make_arxiv_result()
-    _stub_arxiv(monkeypatch, [bad, good])
-
-    tool = LiteratureSearch()
-    out = await tool(SearchIndexType.ARXIV, "q", limit=5)
-
-    assert len(out) == 1
-    assert str(out[0].url) == good.entry_id
+    assert set(tool._handlers) == {
+        SearchIndexType.PUBMED,
+        SearchIndexType.CROSSREF,
+    }
 
 
 # --- PubMed ---

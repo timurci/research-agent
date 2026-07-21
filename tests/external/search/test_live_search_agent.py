@@ -1,7 +1,7 @@
 """Live network tests for the search agent.
 
 Search-slice live test. Hits the local LFM language model and the real
-arXiv, PubMed, and CrossRef APIs through the ``LiteratureSearch`` tool.
+PubMed and CrossRef APIs through the ``LiteratureSearch`` tool.
 Tagged ``live`` and skipped by default (see root ``conftest.py``); run
 explicitly with ``uv run pytest -m live``.
 """

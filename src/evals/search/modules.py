@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 
 MODULE_NAMES: frozenset[str] = frozenset({"search", "search-e2e"})
 
-SEARCH_SAMPLE_LIMIT: int = 50
-SEARCH_E2E_SAMPLE_LIMIT: int = 50
+SEARCH_SAMPLE_LIMIT: int = 30
+SEARCH_E2E_SAMPLE_LIMIT: int = 30
 
 
 def as_query_predict_fn(

@@ -19,6 +19,10 @@ MEDIUM_RELEVANCE_THRESHOLD = 0.3
 HIGH_RELEVANCE_SCORE = 1.0
 MEDIUM_RELEVANCE_SCORE = 0.5
 NDCG_AT_K = 10
+TARGET_RESULT_COUNT = 25
+MIN_PASS_RESULT_COUNT = 5
+SCORE_AT_TARGET = 0.95
+OVERSHOOT_HALF_CREDIT = 25
 MIN_RELEVANCE_GRADE = 0
 MAX_RELEVANCE_GRADE = 3
 
@@ -106,6 +110,77 @@ def search_result_non_duplicate(search_results: list[PaperInfo]) -> EvaluationSc
         )
         return EvaluationScore(passing=False, reason=reason, score=0.0)
     return EvaluationScore(passing=True, reason="No duplicate papers found.", score=1.0)
+
+
+def _volume_score(count: int) -> float:
+    """Map result count to a float in ``[0, 1]`` for optimizers.
+
+    Linear from 0 to ``SCORE_AT_TARGET`` over ``[0, TARGET_RESULT_COUNT]``,
+    then a concave residual ``1 - SCORE_AT_TARGET`` for larger counts so
+    volume past the target is only weakly rewarded (relevance remains the
+    stronger co-objective).
+    """
+    if count <= 0:
+        return 0.0
+    if count <= TARGET_RESULT_COUNT:
+        return SCORE_AT_TARGET * (count / TARGET_RESULT_COUNT)
+    overshoot = count - TARGET_RESULT_COUNT
+    residual = 1.0 - SCORE_AT_TARGET
+    return SCORE_AT_TARGET + residual * (
+        overshoot / (overshoot + OVERSHOOT_HALF_CREDIT)
+    )
+
+
+def search_result_count(search_results: list[PaperInfo]) -> EvaluationScore:
+    """Scores the volume of search results.
+
+    Relevance alone can be gamed by returning a single highly relevant
+    paper. This metric rewards longer result lists using the integer
+    count ``n = len(search_results)``:
+
+    - Linear segment: for ``n <= TARGET_RESULT_COUNT``,
+      ``score = SCORE_AT_TARGET * n / TARGET_RESULT_COUNT``
+      (reaches ``SCORE_AT_TARGET`` at the target, not 1.0).
+    - Concave tail: for ``n > TARGET_RESULT_COUNT``, the residual
+      ``1 - SCORE_AT_TARGET`` is allocated with diminishing returns
+      ``u / (u + OVERSHOOT_HALF_CREDIT)`` where ``u = n - target``.
+      Extra papers past the target are weakly rewarded so optimizers
+      prefer improving relevance over unbounded volume.
+    - ``passing`` is true when ``n >= MIN_PASS_RESULT_COUNT`` (eval
+      gate / suite pass rate). The pass floor is coarser than the
+      continuous score so AI evals and optimization use different
+      resolutions of the same count.
+
+    Pair with ``search_result_relevance`` so optimizers cannot trade
+    volume for junk: volume and relevance are separate criteria.
+
+    Args:
+        search_results: Papers returned by the search agent or workflow.
+
+    Returns:
+        Evaluation score whose continuous value is the volume map and
+        whose pass/fail reflects the minimum volume floor.
+    """
+    count = len(search_results)
+    score = _volume_score(count)
+    passing = count >= MIN_PASS_RESULT_COUNT
+    if count >= TARGET_RESULT_COUNT:
+        reason = (
+            f"Returned {count} results "
+            f"(target {TARGET_RESULT_COUNT} met, pass floor {MIN_PASS_RESULT_COUNT})."
+        )
+    elif passing:
+        reason = (
+            f"Returned {count} results "
+            f"(target {TARGET_RESULT_COUNT}, pass floor {MIN_PASS_RESULT_COUNT})."
+        )
+    else:
+        reason = (
+            f"Returned {count} results; "
+            f"need at least {MIN_PASS_RESULT_COUNT} to pass "
+            f"(target {TARGET_RESULT_COUNT})."
+        )
+    return EvaluationScore(passing=passing, reason=reason, score=score)
 
 
 def _validate_relevance_grades(doc_relevance_scores: dict[str, int]) -> None:

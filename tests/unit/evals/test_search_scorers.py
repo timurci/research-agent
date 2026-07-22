@@ -17,6 +17,7 @@ from evals.search.scorers import (
     make_search_result_relevance_scorer,
     relevance_metrics_from_ranking,
     research_query_from_inputs,
+    search_result_count_scorer,
     search_result_non_duplicate_scorer,
 )
 from research_agent.search.metrics import RelevanceMetric
@@ -95,6 +96,39 @@ def test_research_query_from_inputs_rejects_bad_shape() -> None:
 def test_research_query_from_inputs_requires_query_key() -> None:
     with pytest.raises(ScorerShapeError, match="query"):
         research_query_from_inputs({"text": "quantum error correction codes"})
+
+
+def test_count_scorer_below_pass_floor() -> None:
+    outputs = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
+    feedback = search_result_count_scorer(outputs=outputs)
+
+    assert isinstance(feedback, Feedback)
+    assert feedback.name == "search_result_count"
+    assert feedback.value is False
+    assert feedback.metadata == {"score": str(0.95 * 2 / 25)}
+    assert "Returned 2 results" in (feedback.rationale or "")
+    assert feedback.source is not None
+    assert feedback.source.source_id == "research_agent.search.metrics"
+
+
+def test_count_scorer_pass_with_partial_score() -> None:
+    outputs = [_make_paper(f"Paper Number {i:03d}") for i in range(10)]
+    feedback = search_result_count_scorer(outputs=outputs)
+
+    assert isinstance(feedback, Feedback)
+    assert feedback.value is True
+    assert feedback.metadata == {"score": str(0.95 * 10 / 25)}
+    assert "Returned 10 results" in (feedback.rationale or "")
+
+
+def test_count_scorer_meets_target() -> None:
+    outputs = [_make_paper(f"Paper Number {i:03d}") for i in range(25)]
+    feedback = search_result_count_scorer(outputs=outputs)
+
+    assert isinstance(feedback, Feedback)
+    assert feedback.value is True
+    assert feedback.metadata == {"score": "0.95"}
+    assert "target 25 met" in (feedback.rationale or "")
 
 
 def test_non_duplicate_scorer_passes_unique_titles() -> None:
@@ -210,6 +244,8 @@ def test_search_result_relevance_scorer_low_relevance() -> None:
 
 
 def test_mlflow_scorer_wrappers_are_callable() -> None:
+    assert callable(search_result_count_scorer)
+    assert search_result_count_scorer.name == "search_result_count"
     assert callable(search_result_non_duplicate_scorer)
     assert search_result_non_duplicate_scorer.name == "search_result_non_duplicate"
 

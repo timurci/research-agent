@@ -28,6 +28,7 @@ from evals.feedback import code_assessment_source, evaluation_score_to_feedback
 from evals.search.agents import reranker
 from research_agent.search.metrics import (
     RelevanceMetric,
+    search_result_count,
     search_result_non_duplicate,
     search_result_relevance,
 )
@@ -192,6 +193,7 @@ def search_query_scorers(
             Defaults to the ``search-rerank`` role from ``config/lm.yaml``.
     """
     return (
+        search_result_count_scorer,
         search_result_non_duplicate_scorer,
         make_search_result_relevance_scorer(reranker(lm_config=lm_config)),
     )
@@ -241,4 +243,15 @@ def search_result_non_duplicate_scorer(*, outputs: object = None) -> Feedback:
         score,
         source=SEARCH_METRICS_SOURCE,
         name="search_result_non_duplicate",
+    )
+
+
+@scorer(name="search_result_count")
+def search_result_count_scorer(*, outputs: object = None) -> Feedback:
+    """MLflow scorer for search result volume (integer count vs target)."""
+    score = search_result_count(_require_paper_list(outputs))
+    return evaluation_score_to_feedback(
+        score,
+        source=SEARCH_METRICS_SOURCE,
+        name="search_result_count",
     )

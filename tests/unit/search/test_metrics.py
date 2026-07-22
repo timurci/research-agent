@@ -1,8 +1,8 @@
 """Unit tests for the search evaluation metrics.
 
 Exercises the pure domain metric functions:
-``search_result_relevance``, ``search_result_non_duplicate``, and
-``ndcg_at_10``. No network, no LLM, no async.
+``search_result_relevance``, ``search_result_non_duplicate``,
+``search_result_count``, and ``ndcg_at_10``. No network, no LLM, no async.
 """
 
 from __future__ import annotations
@@ -13,8 +13,13 @@ import pytest
 from pydantic import HttpUrl
 
 from research_agent.search.metrics import (
+    MIN_PASS_RESULT_COUNT,
+    OVERSHOOT_HALF_CREDIT,
+    SCORE_AT_TARGET,
+    TARGET_RESULT_COUNT,
     RelevanceMetric,
     ndcg_at_10,
+    search_result_count,
     search_result_non_duplicate,
     search_result_relevance,
 )
@@ -261,3 +266,103 @@ def test_ndcg_at_10_ideal_uses_full_candidate_set_not_only_top_ten() -> None:
 def test_ndcg_at_10_rejects_out_of_range_grades(bad_grade: int) -> None:
     with pytest.raises(ValueError, match=r"\[0, 3\]"):
         ndcg_at_10(["a"], {"a": bad_grade})
+
+
+def _expected_volume_score(count: int) -> float:
+    if count <= 0:
+        return 0.0
+    if count <= TARGET_RESULT_COUNT:
+        return SCORE_AT_TARGET * (count / TARGET_RESULT_COUNT)
+    overshoot = count - TARGET_RESULT_COUNT
+    residual = 1.0 - SCORE_AT_TARGET
+    return SCORE_AT_TARGET + residual * (
+        overshoot / (overshoot + OVERSHOOT_HALF_CREDIT)
+    )
+
+
+@pytest.mark.parametrize(
+    ("count", "expected_passing"),
+    [
+        (0, False),
+        (4, False),
+        (5, True),
+        (12, True),
+        (25, True),
+        (40, True),
+        (50, True),
+    ],
+)
+def test_search_result_count_steps(
+    count: int,
+    expected_passing: bool,  # noqa: FBT001  # parametrize row is (count, passing)
+) -> None:
+    results = [_make_paper(f"Paper Number {i:03d}") for i in range(count)]
+    score = search_result_count(results)
+    assert score.passing is expected_passing
+    assert score.score == pytest.approx(_expected_volume_score(count))
+    assert str(count) in score.reason
+    assert str(TARGET_RESULT_COUNT) in score.reason
+
+
+def test_search_result_count_linear_ends_below_one_at_target() -> None:
+    results = [_make_paper(f"Paper Number {i:03d}") for i in range(TARGET_RESULT_COUNT)]
+    score = search_result_count(results)
+    assert score.score == pytest.approx(SCORE_AT_TARGET)
+    assert score.score < 1.0
+
+
+def test_search_result_count_overshoot_is_concave_and_below_one() -> None:
+    step = 10
+    at_target = search_result_count(
+        [_make_paper(f"Paper Number {i:03d}") for i in range(TARGET_RESULT_COUNT)]
+    )
+    plus_one_step = search_result_count(
+        [
+            _make_paper(f"Paper Number {i:03d}")
+            for i in range(TARGET_RESULT_COUNT + step)
+        ]
+    )
+    plus_two_steps = search_result_count(
+        [
+            _make_paper(f"Paper Number {i:03d}")
+            for i in range(TARGET_RESULT_COUNT + 2 * step)
+        ]
+    )
+    assert at_target.score < plus_one_step.score < plus_two_steps.score < 1.0
+    gain_first = plus_one_step.score - at_target.score
+    gain_second = plus_two_steps.score - plus_one_step.score
+    assert gain_first > gain_second
+
+
+def test_search_result_count_below_pass_floor_reason() -> None:
+    score = search_result_count([])
+    assert score == EvaluationScore(
+        passing=False,
+        reason=(
+            f"Returned 0 results; need at least {MIN_PASS_RESULT_COUNT} to pass "
+            f"(target {TARGET_RESULT_COUNT})."
+        ),
+        score=0.0,
+    )
+
+
+def test_search_result_count_pass_below_target_reason() -> None:
+    results = [
+        _make_paper(f"Paper Number {i:03d}") for i in range(MIN_PASS_RESULT_COUNT)
+    ]
+    score = search_result_count(results)
+    assert score.passing is True
+    assert score.score == pytest.approx(
+        SCORE_AT_TARGET * (MIN_PASS_RESULT_COUNT / TARGET_RESULT_COUNT)
+    )
+    assert f"target {TARGET_RESULT_COUNT}" in score.reason
+    assert f"pass floor {MIN_PASS_RESULT_COUNT}" in score.reason
+
+
+def test_search_result_count_meets_target_reason() -> None:
+    results = [_make_paper(f"Paper Number {i:03d}") for i in range(TARGET_RESULT_COUNT)]
+    score = search_result_count(results)
+    assert score.passing is True
+    assert score.score == pytest.approx(SCORE_AT_TARGET)
+    assert f"target {TARGET_RESULT_COUNT} met" in score.reason
+    assert f"pass floor {MIN_PASS_RESULT_COUNT}" in score.reason

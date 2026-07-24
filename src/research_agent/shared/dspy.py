@@ -3,9 +3,33 @@
 Layer: Infrastructure.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import dspy
 
 from .metric import ToolCallObservation
+
+if TYPE_CHECKING:
+    from .agent import LMConfig
+
+
+def dspy_lm(lm_config: LMConfig) -> dspy.LM:
+    """Build a DSPy LM from an ``LMConfig`` role mapping.
+
+    Args:
+        lm_config: Role fields (model, key, base URL, provider extras).
+
+    Returns:
+        Configured ``dspy.LM`` ready for ``dspy.settings.context``.
+    """
+    return dspy.LM(
+        model=lm_config.model,
+        api_key=lm_config.api_key,
+        api_base=str(lm_config.base_url) if lm_config.base_url else None,
+        extra_body=lm_config.provider_config,
+    )
 
 
 def extract_tool_calls(trajectory: dict[str, Any]) -> list[ToolCallObservation]:

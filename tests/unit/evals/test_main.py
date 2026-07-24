@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -47,7 +48,7 @@ def _mock_mlflow_evaluate(mlflow_mod: MagicMock) -> None:
 
 
 def test_module_names_has_search_suites() -> None:
-    assert frozenset({"search", "search-e2e"}) == MODULE_NAMES
+    assert frozenset({"search-search", "search-e2e"}) == MODULE_NAMES
 
 
 def test_parser_accepts_modules_and_options() -> None:
@@ -55,7 +56,7 @@ def test_parser_accepts_modules_and_options() -> None:
     args = parser.parse_args(
         [
             "search-e2e",
-            "search",
+            "search-search",
             "--experiment",
             "my-exp",
             "--tracking-uri",
@@ -64,7 +65,7 @@ def test_parser_accepts_modules_and_options() -> None:
             "config/custom-lm.yaml",
         ],
     )
-    assert args.modules == ["search-e2e", "search"]
+    assert args.modules == ["search-e2e", "search-search"]
     assert args.experiment == "my-exp"
     assert args.tracking_uri == "./mlruns"
     assert args.config.as_posix() == "config/custom-lm.yaml"
@@ -95,7 +96,7 @@ def test_parser_limit_and_seed_defaults() -> None:
 def test_parser_accepts_limit_and_seed() -> None:
     parser = _build_parser()
     args = parser.parse_args(
-        ["search", "--experiment", "my-exp", "--limit", "5", "--seed", "7"],
+        ["search-search", "--experiment", "my-exp", "--limit", "5", "--seed", "7"],
     )
     assert args.limit == 5
     assert args.seed == 7
@@ -130,7 +131,7 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
     built: dict[str, object] = {}
 
     fake_module = MagicMock()
-    fake_module.name = "search"
+    fake_module.name = "search-search"
     fake_module.load_data.return_value = []
     fake_module.build_predict_fn.return_value = lambda **_: []
     fake_module.build_scorers.return_value = []
@@ -141,9 +142,9 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
         search_lm_config: LMConfig,
         rerank_lm_config: LMConfig,
     ) -> dict[str, object]:
-        built["search"] = search_lm_config
+        built["search-search"] = search_lm_config
         built["rerank"] = rerank_lm_config
-        return {"search": fake_module}
+        return {"search-search": fake_module}
 
     with (
         patch("evals.main.build_modules", side_effect=_capture_build),
@@ -157,7 +158,7 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
         )
         main(
             [
-                "search",
+                "search-search",
                 "--experiment",
                 "cli-exp",
                 "--config",
@@ -165,7 +166,7 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
             ],
         )
 
-    assert built["search"] == search_cfg
+    assert built["search-search"] == search_cfg
     assert built["rerank"] == rerank_cfg
 
 
@@ -174,15 +175,15 @@ def test_main_subsamples_rows_over_module_limit(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     config_path = _write_config(tmp_path)
-    module = _rows_module("search", row_count=10, limit=3)
+    module = _rows_module("search-search", row_count=10, limit=3)
 
     with (
-        patch("evals.main.build_modules", return_value={"search": module}),
+        patch("evals.main.build_modules", return_value={"search-search": module}),
         patch("evals.main.mlflow") as mlflow_mod,
         caplog.at_level(logging.INFO, logger="evals.main"),
     ):
         _mock_mlflow_evaluate(mlflow_mod)
-        main(["search", "--experiment", "cli-exp", "--config", str(config_path)])
+        main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
 
     evaluate_data = mlflow_mod.genai.evaluate.call_args.kwargs["data"]
     assert len(evaluate_data) == 3
@@ -196,16 +197,16 @@ def test_main_subsamples_rows_over_module_limit(
 
 def test_main_limit_flag_overrides_module_sample_limit(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
-    module = _rows_module("search", row_count=10, limit=50)
+    module = _rows_module("search-search", row_count=10, limit=50)
 
     with (
-        patch("evals.main.build_modules", return_value={"search": module}),
+        patch("evals.main.build_modules", return_value={"search-search": module}),
         patch("evals.main.mlflow") as mlflow_mod,
     ):
         _mock_mlflow_evaluate(mlflow_mod)
         main(
             [
-                "search",
+                "search-search",
                 "--experiment",
                 "cli-exp",
                 "--config",
@@ -221,16 +222,16 @@ def test_main_limit_flag_overrides_module_sample_limit(tmp_path: Path) -> None:
 
 def test_main_seed_flag_flows_to_sampling(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
-    module = _rows_module("search", row_count=10, limit=5)
+    module = _rows_module("search-search", row_count=10, limit=5)
 
     with (
-        patch("evals.main.build_modules", return_value={"search": module}),
+        patch("evals.main.build_modules", return_value={"search-search": module}),
         patch("evals.main.mlflow") as mlflow_mod,
     ):
         _mock_mlflow_evaluate(mlflow_mod)
         main(
             [
-                "search",
+                "search-search",
                 "--experiment",
                 "cli-exp",
                 "--config",
@@ -252,7 +253,7 @@ def test_main_rejects_zero_limit(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(
             [
-                "search",
+                "search-search",
                 "--experiment",
                 "cli-exp",
                 "--config",
@@ -261,3 +262,42 @@ def test_main_rejects_zero_limit(tmp_path: Path) -> None:
                 "0",
             ],
         )
+
+
+def test_main_defaults_max_workers_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config_path = _write_config(tmp_path)
+    module = _rows_module("search-search", row_count=1, limit=1)
+    monkeypatch.delenv("MLFLOW_GENAI_EVAL_MAX_WORKERS", raising=False)
+
+    with (
+        patch("evals.main.build_modules", return_value={"search-search": module}),
+        patch("evals.main.mlflow") as mlflow_mod,
+        caplog.at_level(logging.INFO, logger="evals.main"),
+    ):
+        _mock_mlflow_evaluate(mlflow_mod)
+        main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
+
+    assert os.environ["MLFLOW_GENAI_EVAL_MAX_WORKERS"] == "10"
+    assert "MLFLOW_GENAI_EVAL_MAX_WORKERS=10" in caplog.text
+
+
+def test_main_preserves_existing_max_workers_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_config(tmp_path)
+    module = _rows_module("search-search", row_count=1, limit=1)
+    monkeypatch.setenv("MLFLOW_GENAI_EVAL_MAX_WORKERS", "4")
+
+    with (
+        patch("evals.main.build_modules", return_value={"search-search": module}),
+        patch("evals.main.mlflow") as mlflow_mod,
+    ):
+        _mock_mlflow_evaluate(mlflow_mod)
+        main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
+
+    assert os.environ["MLFLOW_GENAI_EVAL_MAX_WORKERS"] == "4"

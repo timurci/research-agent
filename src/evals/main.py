@@ -3,10 +3,10 @@
 Usage::
 
     uv run -m evals.main --list
-    uv run -m evals.main --experiment my-exp search-e2e search
+    uv run -m evals.main --experiment my-exp search-e2e search-search
     uv run -m evals.main --experiment my-exp --tracking-uri ./mlruns search-e2e
-    uv run -m evals.main --experiment my-exp --config config/lm.yaml search
-    uv run -m evals.main --experiment my-exp --limit 5 --seed 7 search
+    uv run -m evals.main --experiment my-exp --config config/lm.yaml search-search
+    uv run -m evals.main --experiment my-exp --limit 5 --seed 7 search-search
 """
 
 from __future__ import annotations
@@ -132,6 +132,27 @@ def _run_module(module: EvalModule, *, seed: int) -> None:
     )
 
 
+def _apply_mlflow_eval_env_defaults() -> None:
+    """Set project defaults for MLflow GenAI eval env vars when unset."""
+    skip_key = "MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION"
+    if os.environ.setdefault(skip_key, "true") == "true":
+        logger.info(
+            "Skipping MLflow predict_fn trace validation (%s=true); "
+            "predict_fn is already @mlflow.trace'd",
+            skip_key,
+        )
+
+    workers_key = "MLFLOW_GENAI_EVAL_MAX_WORKERS"
+    workers_default = "10"
+    if os.environ.setdefault(workers_key, workers_default) == workers_default:
+        logger.info(
+            "Limiting MLflow genai.evaluate concurrency (%s=%s); "
+            "override the env var to raise parallelism",
+            workers_key,
+            workers_default,
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Parse CLI args and run selected evaluation modules."""
     parser = _build_parser()
@@ -162,16 +183,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.tracking_uri is not None:
         mlflow.set_tracking_uri(args.tracking_uri)
     mlflow.set_experiment(args.experiment)
-    mlflow.dspy.autolog()
-    mlflow.litellm.autolog()
 
-    skip_key = "MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION"
-    if os.environ.setdefault(skip_key, "true") == "true":
-        logger.info(
-            "Skipping MLflow predict_fn trace validation (%s=true); "
-            "predict_fn is already @mlflow.trace'd",
-            skip_key,
-        )
+    _apply_mlflow_eval_env_defaults()
 
     for name in args.modules:
         _run_module(modules[name], seed=args.seed)

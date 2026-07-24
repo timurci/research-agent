@@ -11,7 +11,6 @@ from research_agent.search.tools import SEARCH_RESULTS_KEY
 from research_agent.shared.session import (
     InMemorySession,
     InvalidSessionStateError,
-    MissingSessionKeyError,
 )
 
 _ABSTRACT = (
@@ -73,7 +72,7 @@ def test_papers_for_ids_bool_id_raises() -> None:
 
 def test_papers_for_ids_missing_key_raises() -> None:
     session = InMemorySession()
-    with pytest.raises(MissingSessionKeyError):
+    with pytest.raises(InvalidSessionStateError, match="list"):
         _papers_for_ids(session, [0])
 
 

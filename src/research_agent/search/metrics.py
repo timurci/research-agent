@@ -98,6 +98,8 @@ def search_result_relevance(
 
 def search_result_non_duplicate(search_results: list[PaperInfo]) -> EvaluationScore:
     """Evaluates whether there are any duplicate search results based on title."""
+    if not search_results:
+        return EvaluationScore(passing=False, reason="Empty input", score=0.0)
     title_counter = Counter()
     for result in search_results:
         title_counter[result.title] += 1

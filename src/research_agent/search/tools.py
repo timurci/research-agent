@@ -24,10 +24,6 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from research_agent.search.models import PaperInfo, SearchIndexType
 from research_agent.shared.executor import run_async
-from research_agent.shared.session import (
-    InvalidSessionStateError,
-    MissingSessionKeyError,
-)
 
 if TYPE_CHECKING:
     from research_agent.shared.session import Session
@@ -47,6 +43,10 @@ SEARCH_RESULTS_KEY: str = "search_results"
 
 class UnknownIndexError(Exception):
     """Raised when ``LiteratureSearch`` receives an unknown index."""
+
+
+class _ResultValidator(BaseModel):
+    results: list[PaperInfo]
 
 
 def _require_url(value: str | None, *, context: str) -> str:
@@ -590,33 +590,12 @@ class IndexedLiteratureSearch:
             (or empty) when the index returns fewer matches.
         """
         papers = await self._literature_search(search_index, query, limit=limit)
-        bag = _search_results_bag(self._session)
+        bag = _ResultValidator.model_validate(
+            {"results": self._session.get(SEARCH_RESULTS_KEY, [])}
+        ).results
         start = len(bag)
         bag.extend(papers)
         self._session.set(SEARCH_RESULTS_KEY, bag)
         return [
             IndexedPaper(id=start + i, paper=paper) for i, paper in enumerate(papers)
         ]
-
-
-def _search_results_bag(session: Session) -> list[PaperInfo]:
-    """Return the session search_results list, or a new empty list.
-
-    Raises:
-        InvalidSessionStateError: If the stored value is not a
-            ``list[PaperInfo]``.
-    """
-    try:
-        raw = session.get(SEARCH_RESULTS_KEY)
-    except MissingSessionKeyError:
-        return []
-    if not isinstance(raw, list):
-        msg = f"{SEARCH_RESULTS_KEY!r} must be a list[PaperInfo]"
-        raise InvalidSessionStateError(msg)
-    papers: list[PaperInfo] = []
-    for item in raw:
-        if not isinstance(item, PaperInfo):
-            msg = f"{SEARCH_RESULTS_KEY!r} entries must be PaperInfo"
-            raise InvalidSessionStateError(msg)
-        papers.append(item)
-    return papers

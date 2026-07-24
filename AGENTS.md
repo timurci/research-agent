@@ -56,7 +56,7 @@ src/research_agent/          runtime; imports slices, wires workflows
   shared/                    cross-slice kernel (Agent, Session, executor, …)
   search/                    search slice (models, metrics, tools, agents, workflows)
 src/datagen/                 synthetic query generation (NOT runtime)
-src/optimize/                DSPy optimization pipeline (NOT runtime)
+src/optimize/                DSPy GEPA optimization harness (NOT runtime)
 src/evals/                   MLflow scorers + eval agent wiring (NOT runtime)
 tests/unit/                  deterministic tests (mirror package layout)
 tests/external/              live tests (`live` marker; skipped by default)
@@ -91,8 +91,8 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 ## Tooling boundaries
 
 - `src/datagen` — synthetic queries → `data/datagen/output/queries_train.jsonl` via `uv run generate-queries`.
-- `src/optimize` — DSPy optimization against live indexes; unfinished until `research_agent.search.program` exists (`NotImplementedError` is intentional).
-- `src/evals` — MLflow scorer adapters + eval agent factories; run suites with `uv run -m evals.main --list` / `uv run -m evals.main --experiment NAME search-e2e search`.
+- `src/optimize` — DSPy GEPA optimization harness, currently optimizes the **search agent only** (not reranker, not e2e).
+- `src/evals` — MLflow scorer adapters + eval agent factories; run suites with `uv run -m evals.main --list` / `uv run -m evals.main --experiment NAME search-e2e search-search`.
 - LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.lm_config` (Infrastructure). Roles `search-search` and `search-rerank` are `LMConfig` field maps.
 - Do not commit under `data/**/output/` except `.gitkeep`.
 
@@ -101,7 +101,7 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 - Do not import `datagen`, `optimize`, or `evals` from `research_agent`.
 - Do not import DSPy, LiteLLM, MLflow, or other LLM libraries into Domain or Application.
 - Do not import between slices.
-- Do not reimplement domain metric logic in MLflow scorers (adapt I/O only; map `EvaluationScore` → `Feedback` with a metrics-module `source_id`).
+- Do not reimplement domain metric logic in MLflow scorers or GEPA metrics (adapt I/O only; map `EvaluationScore` → MLflow `Feedback` or GEPA `ScoreWithFeedback`).
 - Do not bound `Agent` type variables to `BaseModel`.
 - Do not re-validate structure Pydantic already enforces.
 
@@ -109,5 +109,6 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 - `uv run pytest` runs unit tests + coverage on `src/research_agent` only; live tests need `uv run pytest -m live`.
 - `ruff` uses `select = ["ALL"]`; do not add new backlog violations.
-- `optimize/main.py` raises `NotImplementedError` until the student program exists — do not wire around it.
-- CLI defaults in `datagen`/`optimize` must stay aligned with the `data/` layout.
+- Optimize train data is HF `tcakmako/research_queries` **train**; evals uses **test**. Compiled artifacts go under `data/optimize/output/`.
+- Live optimize runs hit PubMed/CrossRef/OpenAlex inside the student and a relevance labeler LM in the metric — use `--limit` for smoke tests.
+- CLI defaults in `datagen` must stay aligned with the `data/` layout.

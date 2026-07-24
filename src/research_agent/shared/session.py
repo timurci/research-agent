@@ -31,12 +31,9 @@ class InvalidSessionStateError(Exception):
 class Session(Protocol):
     """Session keeps track of conversation state."""
 
-    def get(self, key: str) -> object:
-        """Return the value for *key*.
-
-        Raises:
-            MissingSessionKeyError: If *key* is not set.
-        """
+    def get(self, key: str, default: object | None = None) -> object | None:
+        """Return the value for *key* or None if the key is not present."""
+        # Note: Use a sentinel value for missing keys if you switch to Python 3.15+
         ...
 
     def set(self, key: str, value: object) -> None:
@@ -48,19 +45,16 @@ class Session(Protocol):
         ...
 
 
-class InMemorySession:
+class InMemorySession(Session):
     """Session implementation backed by an in-memory dict."""
 
     def __init__(self) -> None:
         """Initialize empty session state."""
         self._state: dict[str, object] = {}
 
-    def get(self, key: str) -> object:
+    def get(self, key: str, default: object | None = None) -> object | None:
         """Return the value for *key*."""
-        try:
-            return self._state[key]
-        except KeyError:
-            raise MissingSessionKeyError(key) from None
+        return self._state.get(key, default)
 
     def set(self, key: str, value: object) -> None:
         """Store *value* under *key*."""

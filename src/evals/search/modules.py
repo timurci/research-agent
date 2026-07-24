@@ -1,7 +1,7 @@
 """Search evaluation module registry for ``mlflow.genai.evaluate``.
 
 Query-only modules load HF research queries with no gold paper lists.
-``search`` runs the search agent alone; ``search-e2e`` runs search then
+``search-search`` runs the search agent alone; ``search-e2e`` runs search then
 rerank. Both cap the loaded dataset at ``*_SAMPLE_LIMIT`` rows via
 seeded subsampling (see ``evals.harness.sample_rows``). Default
 relevance scorers label with the same default reranker config family as
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from research_agent.shared.agent import LMConfig
 
-MODULE_NAMES: frozenset[str] = frozenset({"search", "search-e2e"})
+MODULE_NAMES: frozenset[str] = frozenset({"search-search", "search-e2e"})
 
 SEARCH_SAMPLE_LIMIT: int = 30
 SEARCH_E2E_SAMPLE_LIMIT: int = 30
@@ -85,8 +85,8 @@ def build_modules(
             and relevance scorers.
     """
     return {
-        "search": query_module(
-            "search",
+        "search-search": query_module(
+            "search-search",
             lambda: search_agent(lm_config=search_lm_config),
             scorers=lambda: search_query_scorers(lm_config=rerank_lm_config),
             sample_limit=SEARCH_SAMPLE_LIMIT,

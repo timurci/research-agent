@@ -9,6 +9,10 @@ Application LM roles for the search slice:
 
 * ``search-search`` — search agent
 * ``search-rerank`` — reranker / relevance labeler
+
+Tooling roles (not runtime):
+
+* ``optimize-teacher`` — GEPA reflection/teacher for optimize runs
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ DEFAULT_LM_CONFIG_PATH = Path("config/lm.yaml")
 
 ROLE_SEARCH_SEARCH = "search-search"
 ROLE_SEARCH_RERANK = "search-rerank"
+ROLE_OPTIMIZE_TEACHER = "optimize-teacher"
 
 
 class LMConfigFileError(Exception):

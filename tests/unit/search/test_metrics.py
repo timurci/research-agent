@@ -164,7 +164,7 @@ def test_search_result_relevance_reason_groups_titles_by_tier() -> None:
 @pytest.mark.parametrize(
     ("titles", "expected_passing", "expected_reason_contains"),
     [
-        ([], True, ["No duplicate papers found."]),
+        ([], False, ["Empty input"]),
         (
             [_TITLE_A, _TITLE_B, _TITLE_C, _TITLE_D],
             True,

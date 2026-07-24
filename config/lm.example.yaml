@@ -15,3 +15,9 @@ search-rerank:
   model: infinity/LFM2.5-ColBERT-350M
   api_key: ignored-auth-key
   base_url: http://localhost:8080/v1
+
+# GEPA reflection/teacher for optimize runs (strong model recommended).
+optimize-teacher:
+  model: openai/Qwen3.5-4B
+  api_key: ignored-auth-key
+  base_url: http://localhost:8080/v1

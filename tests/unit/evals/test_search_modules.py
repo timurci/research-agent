@@ -31,7 +31,7 @@ _RERANK = LMConfig(model="infinity/test-rerank")
 
 
 def test_module_names() -> None:
-    assert frozenset({"search", "search-e2e"}) == MODULE_NAMES
+    assert frozenset({"search-search", "search-e2e"}) == MODULE_NAMES
 
 
 def test_build_modules_names_and_factories() -> None:
@@ -52,7 +52,7 @@ def test_build_modules_sets_sample_limits() -> None:
         search_lm_config=_SEARCH,
         rerank_lm_config=_RERANK,
     )
-    assert modules["search"].sample_limit == SEARCH_SAMPLE_LIMIT
+    assert modules["search-search"].sample_limit == SEARCH_SAMPLE_LIMIT
     assert modules["search-e2e"].sample_limit == SEARCH_E2E_SAMPLE_LIMIT
 
 
@@ -70,8 +70,8 @@ def test_build_modules_injects_lm_configs() -> None:
         workflow_factory.return_value = object()
         scorers_factory.return_value = ()
 
-        modules["search"].build_predict_fn()
-        modules["search"].build_scorers()
+        modules["search-search"].build_predict_fn()
+        modules["search-search"].build_scorers()
         modules["search-e2e"].build_predict_fn()
         modules["search-e2e"].build_scorers()
 

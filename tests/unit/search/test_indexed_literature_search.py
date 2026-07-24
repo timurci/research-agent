@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import HttpUrl
+from pydantic import HttpUrl, ValidationError
 
 from research_agent.search.models import PaperInfo, SearchIndexType
 from research_agent.search.tools import (
@@ -11,7 +11,7 @@ from research_agent.search.tools import (
     IndexedLiteratureSearch,
     LiteratureSearch,
 )
-from research_agent.shared.session import InMemorySession, InvalidSessionStateError
+from research_agent.shared.session import InMemorySession
 
 _ABSTRACT = (
     "A sufficiently long abstract describing the research methodology, "
@@ -87,12 +87,12 @@ async def test_empty_results() -> None:
 
 
 @pytest.mark.asyncio
-async def test_corrupt_bag_raises_invalid_session_state() -> None:
+async def test_corrupt_bag_raises_validation_error() -> None:
     session = InMemorySession()
     session.set(SEARCH_RESULTS_KEY, "not-a-list")
     tool = IndexedLiteratureSearch(
         session,
         _FakeLiteratureSearch([[_make_paper()]]),
     )
-    with pytest.raises(InvalidSessionStateError, match="list"):
+    with pytest.raises(ValidationError, match="list"):
         await tool(SearchIndexType.PUBMED, "q", limit=1)

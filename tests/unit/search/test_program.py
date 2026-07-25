@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, ClassVar
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
-import pytest
+import dspy
 from pydantic import HttpUrl
+
+from optimize.search.agents import SearchProgram
+from research_agent.search.models import PaperInfo, ResearchQuery, SearchIndexType
+from research_agent.search.tools import SEARCH_RESULTS_KEY, LiteratureSearch
+from research_agent.shared.agent import LMConfig
+from research_agent.shared.session import InMemorySession
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-from optimize.search.program import SearchProgram
-from research_agent.search.models import PaperInfo, ResearchQuery, SearchIndexType
-from research_agent.search.tools import LiteratureSearch
-from research_agent.shared.agent import LMConfig
-from research_agent.shared.session import InMemorySession
 
 _ABSTRACT = (
     "A sufficiently long abstract describing the research methodology, "
@@ -55,25 +53,6 @@ class _FakeLiteratureSearch(LiteratureSearch):
         return self._papers[:limit]
 
 
-class _StubSearchAgent:
-    """SearchAgent double: returns fixed papers."""
-
-    selected_papers: ClassVar[list[PaperInfo]] = []
-
-    def __init__(
-        self,
-        lm_config: LMConfig,
-        session: object,
-        literature_search: LiteratureSearch,
-    ) -> None:
-        self._lm_config = lm_config
-        self._session = session
-        self._literature_search = literature_search
-
-    async def __call__(self, _data: ResearchQuery) -> list[PaperInfo]:
-        return list(self.selected_papers)
-
-
 def _make_program(papers: Sequence[PaperInfo]) -> SearchProgram:
     return SearchProgram(
         lm_config=_CONFIG,
@@ -81,81 +60,84 @@ def _make_program(papers: Sequence[PaperInfo]) -> SearchProgram:
     )
 
 
-@patch("optimize.search.program.SearchAgent", _StubSearchAgent)
-def test_forward_returns_hydrated_search_results() -> None:
+def test_search_program_exposes_react_predictors() -> None:
+    program = _make_program([])
+    names = [name for name, _ in program.named_predictors()]
+    assert names
+    assert any(name.startswith("react") for name in names)
+
+
+def test_forward_returns_prediction_with_search_results() -> None:
     paper = _make_paper()
-    _StubSearchAgent.selected_papers = [paper]
     program = _make_program([paper])
 
-    result = asyncio.run(program.forward(research_query=_QUERY))
+    def _fake_react(*, research_query: ResearchQuery) -> dspy.Prediction:
+        assert research_query == _QUERY
+        program._session.set(SEARCH_RESULTS_KEY, [paper])
+        return dspy.Prediction(selected_ids=[0])
 
-    assert result == [paper]
+    program.react = MagicMock(side_effect=_fake_react)
+
+    result = program(research_query=_QUERY)
+
+    assert isinstance(result, dspy.Prediction)
+    assert result.search_results == [paper]
 
 
-@patch("optimize.search.program.SearchAgent", _StubSearchAgent)
 def test_forward_empty_selection_returns_empty_results() -> None:
-    _StubSearchAgent.selected_papers = []
     program = _make_program([])
 
-    result = asyncio.run(program.forward(research_query=_QUERY))
+    def _fake_react(*, research_query: ResearchQuery) -> dspy.Prediction:
+        del research_query
+        return dspy.Prediction(selected_ids=[])
 
-    assert result == []
+    program.react = MagicMock(side_effect=_fake_react)
+
+    result = program(research_query=_QUERY)
+
+    assert result.search_results == []
 
 
-@patch("optimize.search.program.SearchAgent", _StubSearchAgent)
-def test_forward_binds_fresh_session_per_call() -> None:
+def test_forward_isolates_session_across_calls() -> None:
     paper1 = _make_paper("Paper One Title Long Enough")
     paper2 = _make_paper("Paper Two Title Long Enough")
     program = _make_program([paper1, paper2])
+    selections = [[0], [1]]
+    call_index = 0
 
-    _StubSearchAgent.selected_papers = [paper1]
-    first = asyncio.run(program.forward(research_query=_QUERY))
-    assert first == [paper1]
+    def _fake_react(*, research_query: ResearchQuery) -> dspy.Prediction:
+        nonlocal call_index
+        del research_query
+        assert program._session.get(SEARCH_RESULTS_KEY) == []
+        papers = [paper1, paper2]
+        program._session.set(SEARCH_RESULTS_KEY, papers)
+        selected = selections[call_index]
+        call_index += 1
+        return dspy.Prediction(selected_ids=selected)
 
-    _StubSearchAgent.selected_papers = [paper2]
-    second = asyncio.run(program.forward(research_query=_QUERY))
-    assert second == [paper2]
+    program.react = MagicMock(side_effect=_fake_react)
+
+    first = program(research_query=_QUERY)
+    second = program(research_query=_QUERY)
+
+    assert first.search_results == [paper1]
+    assert second.search_results == [paper2]
 
 
-def test_forward_unknown_selected_id_raises() -> None:
-    """Test SearchAgent raises UnknownSelectedIdError for invalid index.
-
-    Requires real SearchAgent (needs API keys). Stub doesn't validate indices.
-    """
-    pytest.skip("Requires live SearchAgent with API credentials")
-    pytest.skip("Requires live SearchAgent with API credentials")
-
-
-def test_program_builds_search_agent_with_correct_config() -> None:
-    captured: dict[str, object] = {}
-
-    class _CaptureSearchAgent:
-        def __init__(
-            self,
-            lm_config: LMConfig,
-            session: object,
-            literature_search: LiteratureSearch,
-        ) -> None:
-            captured.update(
-                lm_config=lm_config,
-                session=session,
-                literature_search=literature_search,
-            )
-
-        async def __call__(self, _data: ResearchQuery) -> list[PaperInfo]:
-            return []
-
-    with patch("optimize.search.program.SearchAgent", _CaptureSearchAgent):
+def test_program_builds_react_with_shared_builder() -> None:
+    fake_react = object()
+    with patch("optimize.search.agents.build_search_react") as build:
+        build.return_value = fake_react
         program = SearchProgram(
             lm_config=_CONFIG,
             literature_search=_FakeLiteratureSearch([]),
         )
-        # SearchAgent is instantiated in forward(), so we must call it
-        asyncio.run(program.forward(research_query=_QUERY))
 
-    assert captured["lm_config"] is _CONFIG
-    assert isinstance(captured["session"], InMemorySession)
-    assert isinstance(captured["literature_search"], _FakeLiteratureSearch)
+    build.assert_called_once()
+    assert build.call_args.args[0] is program._session
+    assert isinstance(build.call_args.args[0], InMemorySession)
+    assert isinstance(build.call_args.args[1], _FakeLiteratureSearch)
+    assert program.react is fake_react
 
 
 def test_program_stores_lm_config() -> None:
@@ -164,3 +146,4 @@ def test_program_stores_lm_config() -> None:
     assert program._lm_config is _CONFIG
     assert program._literature_search is not None
     assert program._session is not None
+    assert program.react is not None

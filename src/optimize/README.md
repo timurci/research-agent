@@ -26,12 +26,14 @@ optimize/
   search/
     dataset.py          # HF train split → dspy.Example(research_query=…)
     metrics.py          # DSPy/GEPA metric adapters over domain metrics
-    agents.py           # relevance labeler (not a student); optional SearchAgent helper
+    agents.py           # SearchProgram student (owned ReAct); relevance labeler
+    program.py          # re-export of SearchProgram
     modules.py          # named OptimizeModule registry (`search-search` only)
 ```
 
-Runtime student: `optimize.search.program.SearchProgram` (persistent
-ReAct over `SearchAgentSignature`, per-forward session isolation).
+Student: `optimize.search.agents.SearchProgram` — `dspy.Module` with
+`self.react` (`SearchAgentSignature` ReAct), sync `forward` (GEPA path),
+per-call session isolation, prediction field `search_results`.
 
 ## Metric contract (GEPA)
 
@@ -41,15 +43,13 @@ Domain metrics return `EvaluationScore` (`passing`, `reason`, `score` in
 - **score** — continuous domain `.score` (GEPA objective)
 - **feedback** — text built from pass/fail + `.reason` (GEPA reflection)
 
-Search-agent optimization uses three domain metrics:
+Search-agent optimization uses one GEPA metric, `search_query_metric`,
+which averages three domain metrics and concatenates their feedback:
 
 - `search_result_count`
 - `search_result_non_duplicate`
 - `search_result_relevance` (labels from a held-out **relevance labeler**,
   not from the student)
-
-The combined `search_query_metric` averages the three continuous scores
-and concatenates feedback lines.
 
 GEPA callables accept five arguments:
 `(gold, pred, trace, pred_name, pred_trace)`.
@@ -60,8 +60,10 @@ Predictions must expose agent-level `search_results: list[PaperInfo]`
 ## Dataset
 
 - Path: Hugging Face `tcakmako/research_queries`
-- Split: **`train`** (evals uses **`test`**)
+- Source split: **`train`** only (evals uses **`test`**; never mixed into GEPA)
+- Default pool: sample **50** examples, then **80/20** → **40 train** (reflection) / **10 val** (Pareto)
 - Shape: `dspy.Example(research_query=ResearchQuery).with_inputs("research_query")`
+- `--limit N` overrides the pool size before the train/val split
 
 ## How to run
 

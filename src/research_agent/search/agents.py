@@ -63,6 +63,30 @@ class SearchAgentSignature(dspy.Signature):
     )
 
 
+def build_search_react(
+    session: Session,
+    literature_search: LiteratureSearch,
+) -> dspy.ReAct:
+    """Build the search ReAct program bound to a session-backed tool.
+
+    Args:
+        session: Session holding append-only ``search_results``.
+        literature_search: Pure literature index client.
+
+    Returns:
+        A ``dspy.ReAct`` over ``SearchAgentSignature`` with the indexed
+        literature tool. Attach the return value as a ``dspy.Module``
+        attribute when GEPA must discover its predictors.
+    """
+    indexed_search = IndexedLiteratureSearch(session, literature_search)
+    tool = dspy.Tool(indexed_search, name=_LITERATURE_SEARCH_TOOL_NAME)
+    return dspy.ReAct(
+        SearchAgentSignature,
+        tools=[tool],
+        max_iters=_MAX_REACT_ITERS,
+    )
+
+
 class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
     """Search agent: ReAct tool use, index selection, session hydration.
 
@@ -90,13 +114,7 @@ class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
             extra_body=lm_config.provider_config,
         )
         self._session = session
-        indexed_search = IndexedLiteratureSearch(session, literature_search)
-        tool = dspy.Tool(indexed_search, name=_LITERATURE_SEARCH_TOOL_NAME)
-        self._program = dspy.ReAct(
-            SearchAgentSignature,
-            tools=[tool],
-            max_iters=_MAX_REACT_ITERS,
-        )
+        self._program = build_search_react(session, literature_search)
 
     async def __call__(self, data: ResearchQuery) -> list[PaperInfo]:
         """Search for papers and return full records for selected ids.

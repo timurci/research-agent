@@ -38,7 +38,7 @@ def _fake_module() -> OptimizeModule:
     return OptimizeModule(
         name="search-search",
         load_trainset=lambda: [example],
-        build_metric=lambda: MagicMock(name="metric"),
+        metric=MagicMock(name="metric"),
         build_student=lambda: MagicMock(name="student"),
         sample_limit=None,
     )
@@ -88,7 +88,9 @@ def test_main_runs_gepa_and_saves_program(tmp_path: Path) -> None:
     assert gepa_cls.call_args.kwargs["log_dir"] == str(tmp_path / "search-search")
     assert gepa_cls.call_args.kwargs["seed"] == 0
     gepa.compile.assert_called_once()
-    assert gepa.compile.call_args.kwargs["trainset"] == module.load_trainset()
+    examples = module.load_trainset()
+    assert gepa.compile.call_args.kwargs["trainset"] == examples
+    assert gepa.compile.call_args.kwargs["valset"] == examples
     optimized.save.assert_called_once_with(str(tmp_path / "search-search.json"))
 
 

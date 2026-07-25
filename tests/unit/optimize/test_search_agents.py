@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import dspy
 import pytest
 from pydantic import HttpUrl
 
-from optimize.search.agents import relevance_labeler, search_agent
+from optimize.search.agents import SearchProgram, relevance_labeler, search_agent
 from research_agent.search.agents import Reranker
 from research_agent.search.models import ResearchQuery
 from research_agent.shared.agent import LMConfig
-from research_agent.shared.session import InMemorySession
-
-if TYPE_CHECKING:
-    from research_agent.search.models import PaperInfo
 
 _LOAD_LM_CONFIG = "optimize.search.agents.load_lm_config"
 
@@ -39,64 +35,45 @@ def test_relevance_labeler_returns_reranker() -> None:
     assert isinstance(relevance_labeler(lm_config=_RERANK_CONFIG), Reranker)
 
 
+def test_search_program_is_dspy_module_with_react() -> None:
+    program = SearchProgram(lm_config=_SEARCH_CONFIG)
+    assert isinstance(program, dspy.Module)
+    names = [name for name, _ in program.named_predictors()]
+    assert names
+    assert any(name.startswith("react") for name in names)
+
+
 @pytest.mark.asyncio
-async def test_search_agent_builds_new_session_per_call() -> None:
-    agent = search_agent(lm_config=_SEARCH_CONFIG)
+async def test_search_agent_delegates_to_search_program() -> None:
     query = ResearchQuery(text="quantum error correction codes")
-    constructed: list[tuple[object, object, object]] = []
+    program = MagicMock(
+        return_value=dspy.Prediction(search_results=[]),
+    )
 
-    class _StubSearchAgent:
-        def __init__(
-            self,
-            lm_config: object,
-            session: object,
-            lit_search: object,
-        ) -> None:
-            constructed.append((lm_config, session, lit_search))
+    with patch("optimize.search.agents.SearchProgram", return_value=program) as cls:
+        agent = search_agent(lm_config=_SEARCH_CONFIG)
+        result = await agent(query)
 
-        async def __call__(self, data: ResearchQuery) -> list[PaperInfo]:
-            assert data is query
-            return []
-
-    with patch("optimize.search.agents.SearchAgent", _StubSearchAgent):
-        first = await agent(query)
-        second = await agent(query)
-
-    assert first == []
-    assert second == []
-    assert len(constructed) == 2
-    assert constructed[0][1] is not constructed[1][1]
-    assert isinstance(constructed[0][1], InMemorySession)
-    assert isinstance(constructed[1][1], InMemorySession)
-    assert constructed[0][2] is constructed[1][2]
+    cls.assert_called_once()
+    assert cls.call_args.kwargs["lm_config"] is _SEARCH_CONFIG
+    program.assert_called_once_with(research_query=query)
+    assert result == []
 
 
 @pytest.mark.asyncio
 async def test_search_agent_defaults_to_yaml_search_role() -> None:
-    captured: list[LMConfig] = []
     yaml_config = LMConfig(model="openai/from-yaml-search")
-
-    class _StubSearchAgent:
-        def __init__(
-            self,
-            lm_config: LMConfig,
-            _session: object,
-            _lit_search: object,
-        ) -> None:
-            captured.append(lm_config)
-
-        async def __call__(self, _data: ResearchQuery) -> list[PaperInfo]:
-            return []
+    program = MagicMock(return_value=dspy.Prediction(search_results=[]))
 
     with (
         patch(_LOAD_LM_CONFIG, return_value=yaml_config) as load,
-        patch("optimize.search.agents.SearchAgent", _StubSearchAgent),
+        patch("optimize.search.agents.SearchProgram", return_value=program) as cls,
     ):
         agent = search_agent()
         await agent(ResearchQuery(text="default config check query text"))
 
     load.assert_called_once_with("search-search")
-    assert captured == [yaml_config]
+    assert cls.call_args.kwargs["lm_config"] is yaml_config
 
 
 @pytest.mark.asyncio
@@ -106,26 +83,13 @@ async def test_search_agent_uses_injected_lm_config() -> None:
         api_key="search-key",
         base_url=HttpUrl("http://search.example/v1"),
     )
-    captured: list[LMConfig] = []
+    program = MagicMock(return_value=dspy.Prediction(search_results=[]))
 
-    class _StubSearchAgent:
-        def __init__(
-            self,
-            lm_config: LMConfig,
-            _session: object,
-            _lit_search: object,
-        ) -> None:
-            captured.append(lm_config)
-
-        async def __call__(self, _data: ResearchQuery) -> list[PaperInfo]:
-            return []
-
-    with patch("optimize.search.agents.SearchAgent", _StubSearchAgent):
+    with patch("optimize.search.agents.SearchProgram", return_value=program) as cls:
         agent = search_agent(lm_config=custom)
         await agent(ResearchQuery(text="injected config check query text"))
 
-    assert len(captured) == 1
-    assert captured[0] is custom
+    assert cls.call_args.kwargs["lm_config"] is custom
 
 
 def test_relevance_labeler_defaults_to_yaml_rerank_role() -> None:

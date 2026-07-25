@@ -1,21 +1,15 @@
-"""DSPy/GEPA metric adapters for search domain metrics.
+"""DSPy/GEPA metric adapter for search-agent optimization.
 
 Layer: Infrastructure (optimization harness).
 
-Optimizes the **search agent only** (one step). Metrics score
-agent-level ``search_results: list[PaperInfo]``; they do not score a
-reranker or search→rerank e2e workflow.
-
-Search trainsets are query-only: examples carry a ``ResearchQuery`` and
-no gold paper lists. The student prediction must expose agent-level
-``search_results`` (hydrated papers, not signature ``selected_ids``).
-
-Relevance scores are produced at metric time by a held-out relevance
-labeler (runtime ``Reranker`` / ``search-rerank`` role). That labeler is
-**not** the optimization student — bootstrap self-labeling only.
+GEPA accepts a single metric. ``search_query_metric`` is that entrypoint:
+it runs the three domain search quality functions (count, non-duplicate,
+relevance), averages their continuous scores, and concatenates feedback
+for reflection.
 
 Domain metric logic is not reimplemented here. Adapters map domain
-``EvaluationScore`` to GEPA ``ScoreWithFeedback`` (float + text).
+``EvaluationScore`` to GEPA ``ScoreWithFeedback``. Relevance labels come
+from a held-out labeler (``search-rerank``), not from the student.
 """
 
 from __future__ import annotations
@@ -40,6 +34,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping, Sequence
 
     from research_agent.shared.agent import LMConfig
+
+__all__ = ["MetricShapeError", "search_query_metric"]
 
 
 class MetricShapeError(Exception):
@@ -69,14 +65,8 @@ def _require_paper_list(raw: object) -> list[PaperInfo]:
         raise MetricShapeError(msg) from exc
 
 
-def research_query_from_example(example: object) -> ResearchQuery:
-    """Extract a ``ResearchQuery`` from a DSPy gold example.
-
-    Expects ``research_query`` as an attribute or mapping key.
-
-    Raises:
-        MetricShapeError: If the example cannot be interpreted as a query.
-    """
+def _research_query_from_example(example: object) -> ResearchQuery:
+    """Extract a ``ResearchQuery`` from a DSPy gold example."""
     payload: object
     match example:
         case {"research_query": query}:
@@ -93,28 +83,19 @@ def research_query_from_example(example: object) -> ResearchQuery:
         raise MetricShapeError(msg) from exc
 
 
-def search_results_from_pred(pred: object) -> list[PaperInfo]:
-    """Extract agent-level papers from a DSPy prediction.
-
-    Expects ``search_results: list[PaperInfo]`` (not ``selected_ids``).
-    """
+def _search_results_from_pred(pred: object) -> list[PaperInfo]:
+    """Extract agent-level papers from a DSPy prediction."""
     if not hasattr(pred, "search_results"):
         msg = "prediction must expose a 'search_results' attribute"
         raise MetricShapeError(msg)
     return _require_paper_list(pred.search_results)
 
 
-def relevance_metrics_from_ranking(
+def _relevance_metrics_from_ranking(
     papers: list[PaperInfo],
     ranking: Sequence[Mapping[str, object]],
 ) -> list[RelevanceMetric]:
-    """Align reranker hits to the original paper order.
-
-    LiteLLM/ColBERT scores are not guaranteed to lie in ``[0, 1]``. Values
-    outside that range are clamped at this adapter boundary so domain
-    ``RelevanceMetric`` construction succeeds without reimplementing
-    metric logic.
-    """
+    """Align reranker hits to paper order; clamp scores to ``[0, 1]``."""
     if len(ranking) != len(papers):
         msg = (
             f"reranker returned {len(ranking)} scores for "
@@ -149,10 +130,7 @@ def relevance_metrics_from_ranking(
 
 
 def _run_coroutine[T](coro: Coroutine[object, object, T]) -> T:
-    """Run an async coroutine from a synchronous metric context.
-
-    Uses the thread's event loop if available, otherwise creates a new one.
-    """
+    """Run an async coroutine from a synchronous metric context."""
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
@@ -161,84 +139,12 @@ def _run_coroutine[T](coro: Coroutine[object, object, T]) -> T:
     return loop.run_until_complete(coro)
 
 
-def search_result_count_metric(
-    gold: Any,  # noqa: ANN401, ARG001  # DSPy gold example is opaque; GEPA signature
-    pred: Any,  # noqa: ANN401  # DSPy prediction is opaque
-    trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
-    pred_name: str | None = None,  # noqa: ARG001  # GEPA signature; unused
-    pred_trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
-) -> ScoreWithFeedback:
-    """GEPA metric for search result volume."""
-    papers = search_results_from_pred(pred)
-    domain_score = search_result_count(papers)
-    return evaluation_score_to_score_with_feedback(
-        domain_score,
-        name="search_result_count",
-    )
-
-
-def search_result_non_duplicate_metric(
-    gold: Any,  # noqa: ANN401, ARG001  # DSPy gold example is opaque; GEPA signature
-    pred: Any,  # noqa: ANN401  # DSPy prediction is opaque
-    trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
-    pred_name: str | None = None,  # noqa: ARG001  # GEPA signature; unused
-    pred_trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
-) -> ScoreWithFeedback:
-    """GEPA metric for search result title uniqueness."""
-    papers = search_results_from_pred(pred)
-    domain_score = search_result_non_duplicate(papers)
-    return evaluation_score_to_score_with_feedback(
-        domain_score,
-        name="search_result_non_duplicate",
-    )
-
-
-def make_search_result_relevance_metric(
-    labeler: _RelevanceLabeler,
-) -> Callable[..., ScoreWithFeedback]:
-    """Build a GEPA metric that labels relevance via a held-out labeler.
-
-    Args:
-        labeler: Async relevance provider (typically
-            ``relevance_labeler()`` / runtime ``Reranker``). Not the
-            student under optimization.
-
-    Returns:
-        Five-argument GEPA metric callable.
-    """
-
-    def search_result_relevance_metric(
-        gold: Any,  # noqa: ANN401  # DSPy gold example is opaque
-        pred: Any,  # noqa: ANN401  # DSPy prediction is opaque
-        trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
-        pred_name: str | None = None,  # noqa: ARG001  # GEPA signature; unused
-        pred_trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
-    ) -> ScoreWithFeedback:
-        papers = search_results_from_pred(pred)
-        if not papers:
-            domain_score = search_result_relevance([], [])
-            return evaluation_score_to_score_with_feedback(
-                domain_score,
-                name="search_result_relevance",
-            )
-        query = research_query_from_example(gold)
-        ranking = _run_coroutine(labeler.relevance((query, papers)))
-        relevance_scores = relevance_metrics_from_ranking(papers, ranking)
-        domain_score = search_result_relevance(papers, relevance_scores)
-        return evaluation_score_to_score_with_feedback(
-            domain_score,
-            name="search_result_relevance",
-        )
-
-    return search_result_relevance_metric
-
-
 def search_query_metric(
     *,
     lm_config: LMConfig | None = None,
     labeler: _RelevanceLabeler | None = None,
 ) -> Callable[..., ScoreWithFeedback]:
-    """Default combined GEPA metric for search-agent optimization.
+    """GEPA metric for search-agent optimization.
 
     Averages continuous domain scores for count, non-duplicate, and
     relevance, and concatenates feedback strings for reflection.
@@ -249,22 +155,42 @@ def search_query_metric(
         labeler: Optional relevance provider; overrides *lm_config*.
             Not the optimization student.
     """
-    relevance_metric = make_search_result_relevance_metric(
-        labeler if labeler is not None else relevance_labeler(lm_config=lm_config),
+    active_labeler = (
+        labeler if labeler is not None else relevance_labeler(lm_config=lm_config)
     )
 
     def metric(
         gold: Any,  # noqa: ANN401  # DSPy gold example is opaque
         pred: Any,  # noqa: ANN401  # DSPy prediction is opaque
-        trace: Any | None = None,  # noqa: ANN401  # GEPA signature
-        pred_name: str | None = None,
-        pred_trace: Any | None = None,  # noqa: ANN401  # GEPA signature
+        trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
+        pred_name: str | None = None,  # noqa: ARG001  # GEPA signature; unused
+        pred_trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
     ) -> ScoreWithFeedback:
-        count = search_result_count_metric(gold, pred, trace, pred_name, pred_trace)
-        non_dup = search_result_non_duplicate_metric(
-            gold, pred, trace, pred_name, pred_trace
+        papers = _search_results_from_pred(pred)
+
+        count = evaluation_score_to_score_with_feedback(
+            search_result_count(papers),
+            name="search_result_count",
         )
-        rel = relevance_metric(gold, pred, trace, pred_name, pred_trace)
+        non_dup = evaluation_score_to_score_with_feedback(
+            search_result_non_duplicate(papers),
+            name="search_result_non_duplicate",
+        )
+
+        if not papers:
+            domain_relevance = search_result_relevance([], [])
+        else:
+            query = _research_query_from_example(gold)
+            ranking = _run_coroutine(active_labeler.relevance((query, papers)))
+            domain_relevance = search_result_relevance(
+                papers,
+                _relevance_metrics_from_ranking(papers, ranking),
+            )
+        rel = evaluation_score_to_score_with_feedback(
+            domain_relevance,
+            name="search_result_relevance",
+        )
+
         combined_score = (count.score + non_dup.score + rel.score) / 3
         feedback = f"{count.feedback}\n{non_dup.feedback}\n{rel.feedback}"
         return ScoreWithFeedback(score=combined_score, feedback=feedback)

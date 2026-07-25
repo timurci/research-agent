@@ -9,9 +9,11 @@ Usage::
 Optimizes one student step at a time (currently: search agent only).
 Does not optimize the reranker or the search→rerank e2e workflow.
 
-This pipeline loads the Hugging Face train split, builds GEPA metrics
-that adapt domain quality functions, and compiles the student program
-(``optimize.search.program.SearchProgram``) with ``dspy.GEPA``.
+This pipeline loads the Hugging Face **train** split (evals keeps
+**test**), samples a pool, splits it 80/20 into GEPA train (reflection)
+and val (Pareto selection), builds GEPA metrics that adapt domain
+quality functions, and compiles the student program
+(``optimize.search.agents.SearchProgram``) with ``dspy.GEPA``.
 Live index calls (PubMed, CrossRef, OpenAlex) happen inside the search
 student during optimization. The ``search-rerank`` role is used only
 for relevance labeling in metrics; ``optimize-teacher`` is the GEPA
@@ -28,7 +30,12 @@ from typing import TYPE_CHECKING, Literal
 
 import dspy
 
-from optimize.search.modules import MODULE_NAMES, build_modules, sample_examples
+from optimize.search.modules import (
+    MODULE_NAMES,
+    build_modules,
+    sample_examples,
+    split_train_val,
+)
 from research_agent.shared.dspy import dspy_lm
 from research_agent.shared.lm_config import (
     DEFAULT_LM_CONFIG_PATH,
@@ -97,7 +104,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=None,
-        help="Override per-module sample limits for this run.",
+        help=(
+            "Override per-module pool size before the train/val split "
+            "(default module pool: 50 → 40 train / 10 val at 80/20)."
+        ),
     )
     parser.add_argument(
         "--seed",
@@ -121,14 +131,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _run_module(module: OptimizeModule, options: _RunOptions) -> None:
-    """Load the trainset, build metric and student, and compile with GEPA."""
-    trainset = module.load_trainset()
-    logger.info("[%s] loaded %d examples", module.name, len(trainset))
+    """Load data, split train/val, build student, and compile with GEPA."""
+    loaded = module.load_trainset()
+    logger.info("[%s] loaded %d examples", module.name, len(loaded))
 
     sample_limit = options.limit if options.limit is not None else module.sample_limit
-    full_size = len(trainset)
-    trainset = sample_examples(trainset, limit=sample_limit, seed=options.seed)
-    if len(trainset) < full_size:
+    full_size = len(loaded)
+    pool = sample_examples(loaded, limit=sample_limit, seed=options.seed)
+    if len(pool) < full_size:
         logger.warning(
             "[%s] %d examples exceed sample limit %d; sampled down (seed %d)",
             module.name,
@@ -137,10 +147,24 @@ def _run_module(module: OptimizeModule, options: _RunOptions) -> None:
             options.seed,
         )
 
-    metric = module.build_metric()
+    trainset, valset = split_train_val(
+        pool,
+        train_fraction=module.train_fraction,
+        seed=options.seed,
+    )
+    logger.info(
+        "[%s] split pool=%d → train=%d val=%d (fraction=%.2f, seed=%d)",
+        module.name,
+        len(pool),
+        len(trainset),
+        len(valset),
+        module.train_fraction,
+        options.seed,
+    )
+
     student = module.build_student()
     optimizer = dspy.GEPA(
-        metric=metric,
+        metric=module.metric,
         auto=options.auto,
         reflection_lm=options.teacher_lm,
         log_dir=str(options.out_dir / module.name),
@@ -148,7 +172,7 @@ def _run_module(module: OptimizeModule, options: _RunOptions) -> None:
         seed=options.seed,
     )
     logger.info("[%s] compiling with GEPA (auto=%s)", module.name, options.auto)
-    optimized = optimizer.compile(student, trainset=trainset)
+    optimized = optimizer.compile(student, trainset=trainset, valset=valset)
 
     options.out_dir.mkdir(parents=True, exist_ok=True)
     program_path = options.out_dir / f"{module.name}.json"
@@ -158,11 +182,12 @@ def _run_module(module: OptimizeModule, options: _RunOptions) -> None:
     detailed = getattr(optimized, "detailed_results", None)
     if detailed is not None:
         best = detailed.highest_score_achieved_per_val_task
-        logger.info(
-            "[%s] best average val score: %.3f",
-            module.name,
-            sum(best) / len(best),
-        )
+        if best:
+            logger.info(
+                "[%s] best average val score: %.3f",
+                module.name,
+                sum(best) / len(best),
+            )
 
 
 def main(argv: Sequence[str] | None = None) -> None:

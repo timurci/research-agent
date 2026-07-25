@@ -109,6 +109,6 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 - `uv run pytest` runs unit tests + coverage on `src/research_agent` only; live tests need `uv run pytest -m live`.
 - `ruff` uses `select = ["ALL"]`; do not add new backlog violations.
-- Optimize train data is HF `tcakmako/research_queries` **train**; evals uses **test**. Compiled artifacts go under `data/optimize/output/`.
+- Optimize data is HF `tcakmako/research_queries` **train** only (sample 50, 80/20 → 40 train / 10 val for GEPA); evals uses **test**. Compiled artifacts go under `data/optimize/output/`.
 - Live optimize runs hit PubMed/CrossRef/OpenAlex inside the student and a relevance labeler LM in the metric — use `--limit` for smoke tests.
 - CLI defaults in `datagen` must stay aligned with the `data/` layout.

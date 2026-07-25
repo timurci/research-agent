@@ -83,6 +83,8 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 - **Workflow output is bare `list[PaperInfo]`.** No search-index provenance on results; `SearchIndexType` is a tool-dispatch key only.
 - **Metrics live in the domain** as pure functions; `optimize` and `evals` consume them and must not reimplement “good.”
 - **No code comments** (inline/trailing). Google docstrings required (`ruff`).
+- **Local docstrings only.** Each docstring documents only what is local to the object. The definition is the single source of truth for what something *is* and does internally; the call site documents how it *composes* or *uses* it, and only when extra context is needed there. Do not restate an object's behavior, lifecycle, or invariants at a second site. Example: `SearchAgent` is defined in `src/research_agent/search/agents.py`; how a workflow or eval suite wires it belongs in that workflow/eval file, not duplicated on `SearchAgent` or in its module docstring.
+- **State what is true, not what is absent.** A docstring describes what the object is and what it does. Do not document behavior the object does *not* have, or relationships it does *not* have, with other objects. Naming an unrelated concept (e.g., a tool with no session interaction saying "does not affect session") only adds noise. The absence is the default.
 - **Let errors propagate.** Catch only to recover, translate, or re-raise with context — not to return `None`/empty defaults.
 - **Project-specific exceptions** for rule violations: `class <Name>Error(Exception)`; raise directly.
 - **No `cast`.** Prefer better types or control flow.
@@ -104,6 +106,8 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 - Do not reimplement domain metric logic in MLflow scorers or GEPA metrics (adapt I/O only; map `EvaluationScore` → MLflow `Feedback` or GEPA `ScoreWithFeedback`).
 - Do not bound `Agent` type variables to `BaseModel`.
 - Do not re-validate structure Pydantic already enforces.
+- Do not duplicate a definition's behavior, lifecycle, or invariants in another module's docstring or comments. The call site documents only what is local to *its* composition.
+- Do not document absent behavior or non-relationships. If an object has no interaction with X, do not write "does not affect X" — say nothing about X.
 
 ## Known gotchas
 

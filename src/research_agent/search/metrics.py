@@ -96,24 +96,6 @@ def search_result_relevance(
     return EvaluationScore(passing=passing, reason=reason, score=metric_score)
 
 
-def search_result_non_duplicate(search_results: list[PaperInfo]) -> EvaluationScore:
-    """Evaluates whether there are any duplicate search results based on title."""
-    if not search_results:
-        return EvaluationScore(passing=False, reason="Empty input", score=0.0)
-    title_counter = Counter()
-    for result in search_results:
-        title_counter[result.title] += 1
-    duplicated_titles = [title for title, count in title_counter.items() if count > 1]
-    if duplicated_titles:
-        reason = (
-            "Duplicate papers found (same title)."
-            " Results must be unique by title. Duplicate titles:\n"
-            f"{'\n'.join(duplicated_titles)}"
-        )
-        return EvaluationScore(passing=False, reason=reason, score=0.0)
-    return EvaluationScore(passing=True, reason="No duplicate papers found.", score=1.0)
-
-
 def _volume_score(count: int) -> float:
     """Map result count to a float in ``[0, 1]`` for optimizers.
 
@@ -155,6 +137,8 @@ def search_result_count(search_results: list[PaperInfo]) -> EvaluationScore:
 
     Pair with ``search_result_relevance`` so optimizers cannot trade
     volume for junk: volume and relevance are separate criteria.
+    Session storage deduplicates by ``PaperInfo`` equality, so a
+    separate non-duplicate metric is not required.
 
     Args:
         search_results: Papers returned by the search agent or workflow.

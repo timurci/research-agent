@@ -1,8 +1,8 @@
 """Unit tests for the search evaluation metrics.
 
 Exercises the pure domain metric functions:
-``search_result_relevance``, ``search_result_non_duplicate``,
-``search_result_count``, and ``ndcg_at_10``. No network, no LLM, no async.
+``search_result_relevance``, ``search_result_count``, and ``ndcg_at_10``.
+No network, no LLM, no async.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from research_agent.search.metrics import (
     RelevanceMetric,
     ndcg_at_10,
     search_result_count,
-    search_result_non_duplicate,
     search_result_relevance,
 )
 from research_agent.search.models import PaperInfo
@@ -159,39 +158,6 @@ def test_search_result_relevance_reason_groups_titles_by_tier() -> None:
     assert _TITLE_A in score.reason
     assert _TITLE_C in score.reason
     assert _TITLE_B not in score.reason.split("High relevance", 1)[1]
-
-
-@pytest.mark.parametrize(
-    ("titles", "expected_passing", "expected_reason_contains"),
-    [
-        ([], False, ["Empty input"]),
-        (
-            [_TITLE_A, _TITLE_B, _TITLE_C, _TITLE_D],
-            True,
-            ["No duplicate papers found."],
-        ),
-        ([_TITLE_A, _TITLE_B, _TITLE_A], False, ["Duplicate titles:", _TITLE_A]),
-        (
-            [_TITLE_A, _TITLE_B, _TITLE_A, _TITLE_C, _TITLE_B],
-            False,
-            ["Duplicate titles:", _TITLE_A, _TITLE_B],
-        ),
-    ],
-)
-def test_search_result_non_duplicate(
-    titles: list[str],
-    expected_passing: bool,  # noqa: FBT001  # parametrize row passes (titles, passing, reason) positionally
-    expected_reason_contains: list[str],
-) -> None:
-    results = [_make_paper(title) for title in titles]
-    score = search_result_non_duplicate(results)
-    assert score.passing is expected_passing
-    if expected_passing:
-        assert score.score == 1.0
-    else:
-        assert score.score == 0.0
-    for fragment in expected_reason_contains:
-        assert fragment in score.reason
 
 
 def _expected_dcg(relevances: list[int], k: int = 10) -> float:

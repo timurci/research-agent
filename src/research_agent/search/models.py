@@ -24,6 +24,26 @@ class SearchIndexType(StrEnum):
     OPENALEX = "openalex"
 
 
+class SearchStatus(StrEnum):
+    """Terminal status of a literature search ReAct episode.
+
+    Reported by the search agent after tool use; not used to filter the
+    session paper bag. Values:
+
+    * ``complete`` — enough useful papers gathered.
+    * ``insufficient_search`` — stopped early or under-explored.
+    * ``irrelevant_results`` — hits found but do not answer the query.
+    * ``missing_results`` — little or no hits despite reasonable queries.
+    * ``tool_error`` — tool or API failures dominated the trajectory.
+    """
+
+    COMPLETE = "complete"
+    INSUFFICIENT_SEARCH = "insufficient_search"
+    IRRELEVANT_RESULTS = "irrelevant_results"
+    MISSING_RESULTS = "missing_results"
+    TOOL_ERROR = "tool_error"
+
+
 class PaperInfo(BaseModel):
     """Information about a paper, including metadata and source location."""
 

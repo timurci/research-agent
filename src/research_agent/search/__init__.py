@@ -12,7 +12,7 @@ Layers are virtual, expressed by module role and documented in each
 module's docstring (not by subfolders):
 
 - ``models.py`` — Layer: Domain.
-- ``metrics.py`` — Layer: Domain (relevance, non-duplicate, count, NDCG@10).
+- ``metrics.py`` — Layer: Domain (relevance, count, NDCG@10).
 - ``tools.py`` — Layer: Infrastructure.
 - ``agents.py`` — Layer: Infrastructure (DSPy search agent, LiteLLM-backed reranker).
 - ``workflows.py`` — Layer: Application (search + rerank composition).

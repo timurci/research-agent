@@ -3,9 +3,9 @@
 Layer: Infrastructure (optimization harness).
 
 GEPA accepts a single metric. ``search_query_metric`` is that entrypoint:
-it runs the three domain search quality functions (count, non-duplicate,
-relevance), averages their continuous scores, and concatenates feedback
-for reflection.
+it runs the domain search quality functions (count and relevance),
+averages their continuous scores, and concatenates feedback for
+reflection.
 
 Domain metric logic is not reimplemented here. Adapters map domain
 ``EvaluationScore`` to GEPA ``ScoreWithFeedback``. Relevance labels come
@@ -25,7 +25,6 @@ from optimize.search.agents import relevance_labeler
 from research_agent.search.metrics import (
     RelevanceMetric,
     search_result_count,
-    search_result_non_duplicate,
     search_result_relevance,
 )
 from research_agent.search.models import PaperInfo, ResearchQuery
@@ -146,8 +145,8 @@ def search_query_metric(
 ) -> Callable[..., ScoreWithFeedback]:
     """GEPA metric for search-agent optimization.
 
-    Averages continuous domain scores for count, non-duplicate, and
-    relevance, and concatenates feedback strings for reflection.
+    Averages continuous domain scores for count and relevance, and
+    concatenates feedback strings for reflection.
 
     Args:
         lm_config: Labeler LM settings when *labeler* is not provided.
@@ -172,10 +171,6 @@ def search_query_metric(
             search_result_count(papers),
             name="search_result_count",
         )
-        non_dup = evaluation_score_to_score_with_feedback(
-            search_result_non_duplicate(papers),
-            name="search_result_non_duplicate",
-        )
 
         if not papers:
             domain_relevance = search_result_relevance([], [])
@@ -191,8 +186,8 @@ def search_query_metric(
             name="search_result_relevance",
         )
 
-        combined_score = (count.score + non_dup.score + rel.score) / 3
-        feedback = f"{count.feedback}\n{non_dup.feedback}\n{rel.feedback}"
+        combined_score = (count.score + rel.score) / 2
+        feedback = f"{count.feedback}\n{rel.feedback}"
         return ScoreWithFeedback(score=combined_score, feedback=feedback)
 
     return metric

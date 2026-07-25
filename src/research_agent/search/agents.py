@@ -2,16 +2,11 @@
 
 Layer: Infrastructure.
 
-The search agent uses ReAct with an indexed literature tool. The LM
-selects absolute indices into session ``search_results``; full
-``PaperInfo`` records are resolved from a ``Session``.
-
-``search_results`` is append-only for the lifetime of the session.
-Indices remain valid across ReAct tool calls within one turn and across
-turns that share the same session. Callers that need per-query isolation
-must construct a fresh ``Session`` (and agent) per query. Construct one
-session (and agent) per conversation session when multi-turn reuse of
-hits is desired.
+The search agent uses ReAct with a session-backed literature tool. Tool
+calls union full ``PaperInfo`` records into session ``search_results``
+(a ``set[PaperInfo]`` when present; missing key means empty) and return
+slim title/abstract cards for new hits. After the tool loop, the LM reports
+a ``SearchStatus``; the agent returns the index search results as a list.
 """
 
 from __future__ import annotations
@@ -22,25 +17,19 @@ import dspy
 import litellm
 
 from research_agent.search.tools import (
-    SEARCH_RESULTS_KEY,
-    IndexedLiteratureSearch,
     LiteratureSearch,
+    SessionLiteratureSearch,
 )
 from research_agent.shared.agent import Agent
-from research_agent.shared.session import InvalidSessionStateError
 
-from .models import PaperInfo, ResearchQuery
+from .models import PaperInfo, ResearchQuery, SearchStatus
 
 if TYPE_CHECKING:
     from research_agent.shared.agent import LMConfig
     from research_agent.shared.session import Session
 
-_MAX_REACT_ITERS: int = 3
+_MAX_REACT_ITERS: int = 10
 _LITERATURE_SEARCH_TOOL_NAME: str = "LiteratureSearch"
-
-
-class UnknownSelectedIdError(Exception):
-    """Raised when a selected id is not a valid index into search_results."""
 
 
 class _RelevanceScore(TypedDict):
@@ -52,34 +41,30 @@ class SearchAgentSignature(dspy.Signature):
     """Search literature for a research query.
 
     Use the LiteratureSearch tool to query PubMed, CrossRef, or OpenAlex.
-    After gathering results, set selected_ids to the integer ids from tool
-    observations that best answer the research query (most relevant first).
-    Do not invent ids; only use ids returned by LiteratureSearch.
+    Gather papers by running one or more searches. Set status to the
+    best-matching outcome.
     """
 
     research_query: ResearchQuery = dspy.InputField()
-    selected_ids: list[int] = dspy.OutputField(
-        desc="Integer ids from LiteratureSearch results, most relevant first",
+    status: SearchStatus = dspy.OutputField(
+        desc=("Final search outcome"),
     )
 
 
-def build_search_react(
-    session: Session,
-    literature_search: LiteratureSearch,
-) -> dspy.ReAct:
+def build_search_react(session_search: SessionLiteratureSearch) -> dspy.ReAct:
     """Build the search ReAct program bound to a session-backed tool.
 
     Args:
-        session: Session holding append-only ``search_results``.
-        literature_search: Pure literature index client.
+        session_search: Session-backed literature tool wrapping a pure
+            index client. Owned by the caller so its ``_session`` can be
+            swapped between runs for bag isolation.
 
     Returns:
-        A ``dspy.ReAct`` over ``SearchAgentSignature`` with the indexed
+        A ``dspy.ReAct`` over ``SearchAgentSignature`` with the session
         literature tool. Attach the return value as a ``dspy.Module``
         attribute when GEPA must discover its predictors.
     """
-    indexed_search = IndexedLiteratureSearch(session, literature_search)
-    tool = dspy.Tool(indexed_search, name=_LITERATURE_SEARCH_TOOL_NAME)
+    tool = dspy.Tool(session_search, name=_LITERATURE_SEARCH_TOOL_NAME)
     return dspy.ReAct(
         SearchAgentSignature,
         tools=[tool],
@@ -88,10 +73,10 @@ def build_search_react(
 
 
 class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
-    """Search agent: ReAct tool use, index selection, session hydration.
+    """Search agent: ReAct tool use and session-bag return.
 
-    Session ``search_results`` is append-only across calls that share this
-    agent. Selected ids may resolve papers recorded on earlier turns.
+    Session ``search_results`` is a deduplicating ``set[PaperInfo]`` when
+    present. The agent returns ``list(bag)`` without LM selection.
     """
 
     def __init__(
@@ -104,7 +89,8 @@ class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
 
         Args:
             lm_config: The language model to use.
-            session: Session holding append-only ``search_results``.
+            session: Session holding ``search_results`` as
+                ``set[PaperInfo]`` when present.
             literature_search: Pure literature index client.
         """
         self._lm = dspy.LM(
@@ -114,50 +100,14 @@ class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
             extra_body=lm_config.provider_config,
         )
         self._session = session
-        self._program = build_search_react(session, literature_search)
+        self._session_search = SessionLiteratureSearch(session, literature_search)
+        self._program = build_search_react(self._session_search)
 
     async def __call__(self, data: ResearchQuery) -> list[PaperInfo]:
-        """Search for papers and return full records for selected ids.
-
-        Does not clear session ``search_results``; ids remain absolute for
-        the session lifetime. Use a fresh session per query for isolation.
-        """
+        """Search for papers and return the session bag as a list."""
         with dspy.settings.context(lm=self._lm):
-            prediction = await self._program.aforward(research_query=data)
-        selected_ids: list[int] = prediction.selected_ids
-        if not selected_ids:
-            return []
-        return _papers_for_ids(self._session, selected_ids)
-
-
-def _papers_for_ids(session: Session, selected_ids: list[int]) -> list[PaperInfo]:
-    """Resolve selected indices against session ``search_results``.
-
-    Raises:
-        InvalidSessionStateError: If the bag is not a ``list[PaperInfo]``.
-        UnknownSelectedIdError: If an id is not a non-negative index in range.
-    """
-    raw = session.get(SEARCH_RESULTS_KEY)
-    if not isinstance(raw, list):
-        msg = f"{SEARCH_RESULTS_KEY!r} must be a list[PaperInfo]"
-        raise InvalidSessionStateError(msg)
-    results: list[PaperInfo] = []
-    for selected_id in selected_ids:
-        if not isinstance(selected_id, int) or isinstance(selected_id, bool):
-            msg = f"selected id must be a non-bool int, got {selected_id!r}"
-            raise UnknownSelectedIdError(msg)
-        if selected_id < 0 or selected_id >= len(raw):
-            msg = (
-                f"selected id {selected_id} out of range "
-                f"for search_results of length {len(raw)}"
-            )
-            raise UnknownSelectedIdError(msg)
-        paper = raw[selected_id]
-        if not isinstance(paper, PaperInfo):
-            msg = f"search_results[{selected_id}] is not a PaperInfo"
-            raise InvalidSessionStateError(msg)
-        results.append(paper)
-    return results
+            await self._program.aforward(research_query=data)
+        return list(SessionLiteratureSearch.papers(self._session))
 
 
 class Reranker(Agent[tuple[ResearchQuery, list[PaperInfo]], list[PaperInfo]]):

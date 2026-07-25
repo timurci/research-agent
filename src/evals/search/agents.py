@@ -13,10 +13,8 @@ file. Prefer injection over ambient defaults.
 
 MLflow scorers import these agents; they do not import DSPy themselves.
 
-``SearchAgent`` binds a session at construction and treats
-``search_results`` as append-only. Eval tasks are independent queries, so
-``search_agent()`` returns a callable that builds a new
-``InMemorySession`` (and ``SearchAgent``) on every call.
+``SearchAgent`` binds a session at construction and stores
+``search_results`` as ``set[PaperInfo]`` when present.
 """
 
 from __future__ import annotations

@@ -47,7 +47,6 @@ Search-agent optimization uses one GEPA metric, `search_query_metric`,
 which averages three domain metrics and concatenates their feedback:
 
 - `search_result_count`
-- `search_result_non_duplicate`
 - `search_result_relevance` (labels from a held-out **relevance labeler**,
   not from the student)
 
@@ -55,7 +54,8 @@ GEPA callables accept five arguments:
 `(gold, pred, trace, pred_name, pred_trace)`.
 
 Predictions must expose agent-level `search_results: list[PaperInfo]`
-(hydrated papers). Raw signature `selected_ids` is not scored here.
+(session bag after tool use). Signature `status` is diagnostic only and
+is not scored here.
 
 ## Dataset
 

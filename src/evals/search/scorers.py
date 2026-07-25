@@ -29,7 +29,6 @@ from evals.search.agents import reranker
 from research_agent.search.metrics import (
     RelevanceMetric,
     search_result_count,
-    search_result_non_duplicate,
     search_result_relevance,
 )
 from research_agent.search.models import PaperInfo, ResearchQuery
@@ -194,7 +193,6 @@ def search_query_scorers(
     """
     return (
         search_result_count_scorer,
-        search_result_non_duplicate_scorer,
         make_search_result_relevance_scorer(reranker(lm_config=lm_config)),
     )
 
@@ -233,17 +231,6 @@ def make_search_result_relevance_scorer(labeler: _RelevanceLabeler) -> Scorer:
         return _relevance_feedback(papers, relevance_scores)
 
     return search_result_relevance_scorer
-
-
-@scorer(name="search_result_non_duplicate")
-def search_result_non_duplicate_scorer(*, outputs: object = None) -> Feedback:
-    """MLflow scorer for search result title uniqueness."""
-    score = search_result_non_duplicate(_require_paper_list(outputs))
-    return evaluation_score_to_feedback(
-        score,
-        source=SEARCH_METRICS_SOURCE,
-        name="search_result_non_duplicate",
-    )
 
 
 @scorer(name="search_result_count")

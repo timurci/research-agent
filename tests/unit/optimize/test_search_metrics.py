@@ -16,11 +16,7 @@ from optimize.search.metrics import (
     _search_results_from_pred,
     search_query_metric,
 )
-from research_agent.search.metrics import (
-    RelevanceMetric,
-    search_result_count,
-    search_result_non_duplicate,
-)
+from research_agent.search.metrics import RelevanceMetric, search_result_count
 from research_agent.search.models import PaperInfo, ResearchQuery
 
 if TYPE_CHECKING:
@@ -114,7 +110,7 @@ def test_relevance_metrics_from_ranking_clamps_out_of_range_scores() -> None:
     ]
 
 
-def test_search_query_metric_combines_three_domain_scores() -> None:
+def test_search_query_metric_combines_count_and_relevance() -> None:
     papers = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
     fake = _FakeReranker([1.0, 1.0])
     metric = search_query_metric(labeler=fake)
@@ -125,12 +121,10 @@ def test_search_query_metric_combines_three_domain_scores() -> None:
     result = metric(gold, pred)
 
     count = search_result_count(papers)
-    non_dup = search_result_non_duplicate(papers)
-    expected = (count.score + non_dup.score + 1.0) / 3
+    expected = (count.score + 1.0) / 2
     assert isinstance(result, ScoreWithFeedback)
     assert result.score == pytest.approx(expected)
     assert "search_result_count" in result.feedback
-    assert "search_result_non_duplicate" in result.feedback
     assert "search_result_relevance" in result.feedback
     assert "Returned 2 results" in result.feedback
     assert len(fake.calls) == 1
@@ -149,20 +143,6 @@ def test_search_query_metric_empty_results_scores_zero() -> None:
     assert result.score == 0.0
     assert "Empty input" in result.feedback
     assert fake.calls == []
-
-
-def test_search_query_metric_flags_duplicate_titles() -> None:
-    papers = [_make_paper(_TITLE_A), _make_paper(_TITLE_B), _make_paper(_TITLE_A)]
-    fake = _FakeReranker([1.0, 1.0, 1.0])
-    metric = search_query_metric(labeler=fake)
-    result = metric(
-        SimpleNamespace(research_query=ResearchQuery(text="quantum computing survey")),
-        SimpleNamespace(search_results=papers),
-    )
-
-    assert "search_result_non_duplicate" in result.feedback
-    assert _TITLE_A in result.feedback
-    assert result.score < 1.0
 
 
 def test_search_query_metric_accepts_dict_paper_payloads() -> None:

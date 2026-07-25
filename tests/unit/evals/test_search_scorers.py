@@ -18,7 +18,6 @@ from evals.search.scorers import (
     relevance_metrics_from_ranking,
     research_query_from_inputs,
     search_result_count_scorer,
-    search_result_non_duplicate_scorer,
 )
 from research_agent.search.metrics import RelevanceMetric
 from research_agent.search.models import PaperInfo, ResearchQuery
@@ -131,29 +130,6 @@ def test_count_scorer_meets_target() -> None:
     assert "target 25 met" in (feedback.rationale or "")
 
 
-def test_non_duplicate_scorer_passes_unique_titles() -> None:
-    outputs = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
-    feedback = search_result_non_duplicate_scorer(outputs=outputs)
-
-    assert isinstance(feedback, Feedback)
-    assert feedback.name == "search_result_non_duplicate"
-    assert feedback.value is True
-    assert feedback.metadata == {"score": "1.0"}
-    assert "No duplicate papers found." in (feedback.rationale or "")
-    assert feedback.source is not None
-    assert feedback.source.source_id == "research_agent.search.metrics"
-
-
-def test_non_duplicate_scorer_fails_on_duplicate_titles() -> None:
-    outputs = [_make_paper(_TITLE_A), _make_paper(_TITLE_B), _make_paper(_TITLE_A)]
-    feedback = search_result_non_duplicate_scorer(outputs=outputs)
-
-    assert isinstance(feedback, Feedback)
-    assert feedback.value is False
-    assert feedback.metadata == {"score": "0.0"}
-    assert _TITLE_A in (feedback.rationale or "")
-
-
 def test_relevance_metrics_from_ranking_aligns_by_index() -> None:
     papers = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
     ranking: Sequence[Mapping[str, object]] = [
@@ -193,7 +169,7 @@ def test_relevance_metrics_from_ranking_rejects_length_mismatch() -> None:
 
 def test_require_paper_list_rejects_non_list_with_outputs_error() -> None:
     with pytest.raises(ScorerShapeError, match="list\\[PaperInfo\\]"):
-        search_result_non_duplicate_scorer(outputs="not-a-list")
+        search_result_count_scorer(outputs="not-a-list")
 
 
 def test_search_result_relevance_scorer_uses_reranker() -> None:
@@ -246,13 +222,11 @@ def test_search_result_relevance_scorer_low_relevance() -> None:
 def test_mlflow_scorer_wrappers_are_callable() -> None:
     assert callable(search_result_count_scorer)
     assert search_result_count_scorer.name == "search_result_count"
-    assert callable(search_result_non_duplicate_scorer)
-    assert search_result_non_duplicate_scorer.name == "search_result_non_duplicate"
 
 
-def test_non_duplicate_scorer_accepts_dict_paper_payloads() -> None:
+def test_count_scorer_accepts_dict_paper_payloads() -> None:
     paper = _make_paper(_TITLE_A)
-    result = search_result_non_duplicate_scorer(outputs=[paper.model_dump(mode="json")])
+    result = search_result_count_scorer(outputs=[paper.model_dump(mode="json")])
     assert isinstance(result, Feedback)
-    assert result.name == "search_result_non_duplicate"
-    assert result.value is True
+    assert result.name == "search_result_count"
+    assert result.value is False

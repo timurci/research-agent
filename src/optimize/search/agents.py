@@ -4,8 +4,9 @@ Optimization infrastructure: wires DSPy/LiteLLM adapters.
 
 **Student under optimization:** ``SearchProgram`` — a ``dspy.Module`` that
 owns a persistent ``dspy.ReAct`` (``self.react``) so GEPA can discover and
-rewrite predictor instructions. Each sync ``forward`` clears session
-``search_results`` so train examples do not share hits.
+rewrite predictor instructions. Each sync ``forward`` activates a fresh
+``InMemorySession`` on the program's ``ScopedSession`` so concurrent
+GEPA eval threads get a private paper bag, not a shared session race.
 
 GEPA evaluates students via sync ``Module.__call__`` / ``forward`` (not
 ``aforward``), so this student is intentionally synchronous.
@@ -34,17 +35,17 @@ import dspy
 
 from research_agent.search.agents import (
     Reranker,
-    _papers_for_ids,
     build_search_react,
 )
-from research_agent.search.tools import SEARCH_RESULTS_KEY, LiteratureSearch
+from research_agent.search.tools import LiteratureSearch, SessionLiteratureSearch
 from research_agent.shared.lm_config import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
 from research_agent.shared.lm_config import lm_config as load_lm_config
-from research_agent.shared.session import InMemorySession
+from research_agent.shared.session import InMemorySession, ScopedSession
 
 if TYPE_CHECKING:
     from research_agent.search.models import PaperInfo, ResearchQuery
     from research_agent.shared.agent import Agent, LMConfig
+    from research_agent.shared.session import Session
 
 
 _LITERATURE_SEARCH = LiteratureSearch()
@@ -89,28 +90,40 @@ class SearchProgram(dspy.Module):
         self._literature_search = (
             literature_search if literature_search is not None else LiteratureSearch()
         )
-        self._session = InMemorySession()
-        self.react = build_search_react(self._session, self._literature_search)
+        self._scoped = ScopedSession(InMemorySession())
+        self._session_search = SessionLiteratureSearch(
+            self._scoped,
+            self._literature_search,
+        )
+        self.react = build_search_react(self._session_search)
+
+    @property
+    def session(self) -> Session:
+        """Active session for the current thread (override or base)."""
+        return self._scoped.active_session
 
     def forward(self, research_query: ResearchQuery) -> dspy.Prediction:
-        """Search and return a prediction with hydrated ``search_results``.
+        """Run ReAct over a fresh session; attach its bag as ``search_results``.
 
-        Resets session ``search_results`` before each query so training
-        examples cannot share accumulated hits. Enables DSPy async-tool
-        conversion so ReAct's sync path can run async index tools.
+        Activates a new ``InMemorySession`` on the program's
+        ``ScopedSession`` for the duration of the call so each
+        concurrent GEPA thread evaluates against its own bag without
+        rebuilding the owned ``dspy.ReAct`` (GEPA-compiled predictors
+        stay intact). Enables DSPy async-tool conversion so ReAct's sync
+        path can run async index tools.
+
+        Returns the ReAct prediction (trajectory, status, …) with
+        ``search_results`` set from the fresh session bag for metrics.
         """
-        self._session.set(SEARCH_RESULTS_KEY, [])
-        with dspy.settings.context(
-            lm=self._lm,
-            allow_tool_async_sync_conversion=True,
-        ):
-            raw = self.react(research_query=research_query)
-        selected_ids: list[int] = raw.selected_ids
-        if not selected_ids:
-            papers: list[PaperInfo] = []
-        else:
-            papers = _papers_for_ids(self._session, selected_ids)
-        return dspy.Prediction(search_results=papers)
+        fresh = InMemorySession()
+        with self._scoped.use(fresh):
+            with dspy.settings.context(
+                lm=self._lm,
+                allow_tool_async_sync_conversion=True,
+            ):
+                pred = self.react(research_query=research_query)
+            pred.search_results = list(SessionLiteratureSearch.papers(fresh))
+        return pred
 
 
 def search_agent(
@@ -118,10 +131,10 @@ def search_agent(
     lm_config: LMConfig | None = None,
     literature_search: LiteratureSearch | None = None,
 ) -> Agent[ResearchQuery, list[PaperInfo]]:
-    """Search agent student for optimize: one program, cleared session per task.
+    """Search agent student for optimize: one program, isolated bag per task.
 
     Returns a long-lived callable over a single ``SearchProgram``. Each call
-    runs sync ``forward`` (clears ``search_results``) so tasks cannot share
+    runs sync ``forward`` with a private paper bag so tasks cannot share
     hits.
 
     Args:

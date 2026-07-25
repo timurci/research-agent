@@ -1,17 +1,13 @@
-"""Unit tests for search-agent session hydration."""
+"""Unit tests for session paper bag hydration."""
 
 from __future__ import annotations
 
 import pytest
-from pydantic import HttpUrl
+from pydantic import HttpUrl, ValidationError
 
-from research_agent.search.agents import UnknownSelectedIdError, _papers_for_ids
 from research_agent.search.models import PaperInfo
-from research_agent.search.tools import SEARCH_RESULTS_KEY
-from research_agent.shared.session import (
-    InMemorySession,
-    InvalidSessionStateError,
-)
+from research_agent.search.tools import SEARCH_RESULTS_KEY, SessionLiteratureSearch
+from research_agent.shared.session import InMemorySession
 
 _ABSTRACT = (
     "A sufficiently long abstract describing the research methodology, "
@@ -30,61 +26,46 @@ def _make_paper(title: str = "Alpha Paper On Quantum Computing Advances") -> Pap
     )
 
 
-def test_papers_for_ids_preserves_order() -> None:
+def test_papers_returns_set_from_session() -> None:
     session = InMemorySession()
-    papers = [
+    papers = {
         _make_paper("Alpha Paper On Quantum Computing Advances"),
         _make_paper("Beta Paper On Neural Network Optimization"),
-    ]
+    }
     session.set(SEARCH_RESULTS_KEY, papers)
-    assert _papers_for_ids(session, [1, 0]) == [papers[1], papers[0]]
+    assert SessionLiteratureSearch.papers(session) == papers
 
 
-def test_papers_for_ids_out_of_range_raises() -> None:
+def test_papers_missing_key_returns_empty() -> None:
     session = InMemorySession()
-    session.set(SEARCH_RESULTS_KEY, [_make_paper()])
-    with pytest.raises(UnknownSelectedIdError, match="out of range"):
-        _papers_for_ids(session, [9])
+    assert SessionLiteratureSearch.papers(session) == set()
 
 
-def test_papers_for_ids_negative_id_raises() -> None:
+def test_papers_none_value_raises() -> None:
     session = InMemorySession()
-    session.set(SEARCH_RESULTS_KEY, [_make_paper()])
-    with pytest.raises(UnknownSelectedIdError, match="out of range"):
-        _papers_for_ids(session, [-1])
+    session.set(SEARCH_RESULTS_KEY, None)
+    with pytest.raises(TypeError, match="set"):
+        SessionLiteratureSearch.papers(session)
 
 
-def test_papers_for_ids_len_id_raises() -> None:
+def test_papers_non_set_bag_raises() -> None:
     session = InMemorySession()
-    papers = [_make_paper()]
-    session.set(SEARCH_RESULTS_KEY, papers)
-    with pytest.raises(UnknownSelectedIdError, match="out of range"):
-        _papers_for_ids(session, [len(papers)])
+    session.set(SEARCH_RESULTS_KEY, "not-a-set")
+    with pytest.raises(TypeError, match="set"):
+        SessionLiteratureSearch.papers(session)
 
 
-def test_papers_for_ids_bool_id_raises() -> None:
+def test_papers_list_bag_is_coerced_to_set() -> None:
     session = InMemorySession()
-    session.set(SEARCH_RESULTS_KEY, [_make_paper(), _make_paper("Beta Paper Title")])
-    selected_ids: list[int] = [True]
-    with pytest.raises(UnknownSelectedIdError, match="non-bool int"):
-        _papers_for_ids(session, selected_ids)
+    paper = _make_paper()
+    session.set(SEARCH_RESULTS_KEY, [paper, paper])
+    result = SessionLiteratureSearch.papers(session)
+    assert isinstance(result, set)
+    assert result == {paper}
 
 
-def test_papers_for_ids_missing_key_raises() -> None:
+def test_papers_non_paper_entry_raises() -> None:
     session = InMemorySession()
-    with pytest.raises(InvalidSessionStateError, match="list"):
-        _papers_for_ids(session, [0])
-
-
-def test_papers_for_ids_non_list_bag_raises() -> None:
-    session = InMemorySession()
-    session.set(SEARCH_RESULTS_KEY, "not-a-list")
-    with pytest.raises(InvalidSessionStateError, match="list"):
-        _papers_for_ids(session, [0])
-
-
-def test_papers_for_ids_non_paper_entry_raises() -> None:
-    session = InMemorySession()
-    session.set(SEARCH_RESULTS_KEY, ["not-a-paper"])
-    with pytest.raises(InvalidSessionStateError, match="PaperInfo"):
-        _papers_for_ids(session, [0])
+    session.set(SEARCH_RESULTS_KEY, {"not-a-paper"})
+    with pytest.raises(ValidationError):
+        SessionLiteratureSearch.papers(session)

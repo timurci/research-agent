@@ -19,6 +19,7 @@ from research_agent.search.models import (
     MissingOpenAccessPDFError,
     PaperInfo,
     ResearchQuery,
+    SearchStatus,
 )
 from research_agent.shared.metric import ToolCallObservation
 
@@ -99,6 +100,17 @@ def test_paper_info_open_access_with_pdf_url_ok() -> None:
     )
     assert paper.open_access is True
     assert str(paper.pdf_url) == "https://example.com/paper.pdf"
+
+
+def test_search_status_values() -> None:
+    assert SearchStatus.COMPLETE == "complete"
+    assert {member.value for member in SearchStatus} == {
+        "complete",
+        "insufficient_search",
+        "irrelevant_results",
+        "missing_results",
+        "tool_error",
+    }
 
 
 def test_research_query_is_hashable() -> None:

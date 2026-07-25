@@ -5,22 +5,22 @@ Layer: Infrastructure.
 Wraps synchronous SDKs for PubMed/NCBI and CrossRef, and the OpenAlex
 REST API (async ``httpx``), and normalises every response into the
 domain ``PaperInfo`` shape.  ``LiteratureSearch`` dispatches to private
-per-index handlers.  ``IndexedLiteratureSearch`` composes a pure
-``LiteratureSearch`` with a ``Session``: it appends hits to
-``search_results`` and returns full papers tagged with absolute list
-indices for LM selection.
+per-index handlers.  ``SessionLiteratureSearch`` composes a pure
+``LiteratureSearch`` with a ``Session``: it unions full papers into a
+``set[PaperInfo]`` stored under ``search_results`` and returns slim
+title/abstract cards for newly added hits.
 """
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 from urllib.parse import urlencode
 
 import httpx
 from Bio import Entrez
 from habanero import Crossref
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, HttpUrl
 
 from research_agent.search.models import PaperInfo, SearchIndexType
 from research_agent.shared.executor import run_async
@@ -39,6 +39,7 @@ _OPENALEX_WORKS_URL: str = "https://api.openalex.org/works"
 _OPENALEX_TIMEOUT_SECONDS: float = 30.0
 
 SEARCH_RESULTS_KEY: str = "search_results"
+_MISSING: object = object()
 
 
 class UnknownIndexError(Exception):
@@ -46,7 +47,37 @@ class UnknownIndexError(Exception):
 
 
 class _ResultValidator(BaseModel):
-    results: list[PaperInfo]
+    """Validates session ``search_results`` members as ``PaperInfo``."""
+
+    results: set[PaperInfo]
+
+
+def load_search_results(session: Session) -> set[PaperInfo]:
+    """Read, validate, and store back the ``search_results`` bag.
+
+    The returned set is the session-stored object: missing keys are
+    lazily initialised to an empty set, and ``list`` values are coerced
+    to a set (duplicates dropped) and stored back. Mutating the returned
+    object persists because it is the same object stored under
+    ``search_results``. Any other non-set/non-list shape, including
+    ``None``, raises ``TypeError``. Members are validated as
+    ``PaperInfo`` via ``_ResultValidator``.
+
+    Raises:
+        TypeError: If the session value is present but not a ``set`` or
+            ``list``.
+        ValidationError: If set members are not ``PaperInfo``.
+    """
+    raw = session.get(SEARCH_RESULTS_KEY, _MISSING)
+    if raw is _MISSING:
+        bag: set[PaperInfo] = set()
+    elif isinstance(raw, set | list):
+        bag = _ResultValidator.model_validate({"results": raw}).results
+    else:
+        msg = f"search_results must be a set or list, got {type(raw).__name__}"
+        raise TypeError(msg)
+    session.set(SEARCH_RESULTS_KEY, bag)
+    return bag
 
 
 def _require_url(value: str | None, *, context: str) -> str:
@@ -457,14 +488,10 @@ class _OpenAlexSearch:
 
 
 class LiteratureSearch:
-    """Pure literature index dispatcher (not the ReAct tool).
+    """Pure literature index dispatcher.
 
     Routes each call to one private PubMed, CrossRef, or OpenAlex
-    handler via *search_index*.  Does not touch session state.
-
-    The ReAct-facing tool is ``IndexedLiteratureSearch``, which the search
-    agent wraps in ``dspy.Tool`` under the name ``LiteratureSearch``.
-    Unknown indices raise ``UnknownIndexError``.
+    handler via *search_index*.
     """
 
     def __init__(
@@ -534,22 +561,22 @@ class _IndexSearch(Protocol):
     async def __call__(self, query: str, *, limit: int) -> list[PaperInfo]: ...
 
 
-class IndexedPaper(BaseModel):
-    """A paper recorded in session memory with its absolute list index."""
+class PaperCard(TypedDict):
+    """Slim paper observation for the search ReAct trajectory."""
 
-    model_config = ConfigDict(frozen=True)
-
-    id: int = Field(..., ge=0, description="Absolute index in session search_results")
-    paper: PaperInfo = Field(..., description="Full paper record")
+    title: str
+    abstract: str
 
 
-class IndexedLiteratureSearch:
-    """Literature search that indexes hits into session state for selection.
+class SessionLiteratureSearch:
+    """Literature search that records unique full hits in a session.
 
     Composes a pure ``LiteratureSearch`` with a ``Session``. Each call
-    appends new papers to ``session[search_results]``; absolute list
-    indices are the selectable ids. Observations include full
-    ``PaperInfo`` bodies (not truncated cards).
+    unions new papers into ``session[search_results]`` (a
+    ``set[PaperInfo]``) and returns slim title/abstract cards only for
+    papers that were not already present. Pass a ``ScopedSession`` and
+    activate ``use`` per concurrent caller when bag isolation across
+    threads is required without rebuilding this tool.
     """
 
     def __init__(
@@ -560,7 +587,8 @@ class IndexedLiteratureSearch:
         """Wire session and the pure index client.
 
         Args:
-            session: Session whose ``search_results`` list is appended to.
+            session: Session whose ``search_results`` set is updated by
+            each call and read by ``papers``.
             literature_search: Pure literature index dispatcher.
         """
         self._session = session
@@ -572,8 +600,8 @@ class IndexedLiteratureSearch:
         query: str,
         *,
         limit: int,
-    ) -> list[IndexedPaper]:
-        """Search an index, record hits, return id-tagged full papers.
+    ) -> list[PaperCard]:
+        """Search an index, union unique hits into the session bag, return cards.
 
         Args:
             search_index: Which index to query.  One of the
@@ -585,17 +613,27 @@ class IndexedLiteratureSearch:
                 handler clamps it to its own API range.
 
         Returns:
-            Newly found papers tagged with absolute indices into the
-            session ``search_results`` list.  May be shorter than *limit*
-            (or empty) when the index returns fewer matches.
+            Title/abstract cards for papers newly added to the session bag.
         """
         papers = await self._literature_search(search_index, query, limit=limit)
-        bag = _ResultValidator.model_validate(
-            {"results": self._session.get(SEARCH_RESULTS_KEY, [])}
-        ).results
-        start = len(bag)
-        bag.extend(papers)
+        bag = load_search_results(self._session)
+        added: list[PaperInfo] = []
+        for paper in papers:
+            if paper not in bag:
+                bag.add(paper)
+                added.append(paper)
         self._session.set(SEARCH_RESULTS_KEY, bag)
         return [
-            IndexedPaper(id=start + i, paper=paper) for i, paper in enumerate(papers)
+            PaperCard(title=paper.title, abstract=paper.abstract) for paper in added
         ]
+
+    @staticmethod
+    def papers(session: Session) -> set[PaperInfo]:
+        """Return the ``search_results`` bag from *session*.
+
+        Raises:
+            TypeError: If the session bag is present but not a ``set`` or
+                ``list``.
+            ValidationError: If set members are not ``PaperInfo``.
+        """
+        return load_search_results(session)

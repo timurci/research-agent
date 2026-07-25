@@ -5,7 +5,16 @@ Layer: Domain.
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
+
+_ABSTRACT_MAX_LENGTH: int = 3072
 
 
 class MissingOpenAccessPDFError(Exception):
@@ -62,6 +71,13 @@ class PaperInfo(BaseModel):
 
     publication_year: int | None = None
     citation_count: int | None = None
+
+    @field_validator("abstract", mode="before")
+    @classmethod
+    def _truncate_abstract(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value[:_ABSTRACT_MAX_LENGTH]
+        return value
 
     @model_validator(mode="after")
     def _check_open_access_has_pdf(self) -> PaperInfo:

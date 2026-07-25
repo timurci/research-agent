@@ -20,12 +20,18 @@ from urllib.parse import urlencode
 import httpx
 from Bio import Entrez
 from habanero import Crossref
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, ValidationError
 
-from research_agent.search.models import PaperInfo, SearchIndexType
+from research_agent.search.models import (
+    MissingOpenAccessPDFError,
+    PaperInfo,
+    SearchIndexType,
+)
 from research_agent.shared.executor import run_async
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from research_agent.shared.session import Session
 
 _MAX_LIMIT: int = 100
@@ -83,15 +89,26 @@ def load_search_results(session: Session) -> set[PaperInfo]:
 def _require_url(value: str | None, *, context: str) -> str:
     """Return *value* if non-empty, else raise ``ValueError`` with context.
 
-    ``PaperInfo.url`` is required, but several upstream records may
-    legitimately lack a URL.  A missing URL is a data quality bug at the
-    tool layer: it cannot be silently dropped, and a fabricated fallback
-    would mislead downstream consumers, so propagate the issue.
+    ``PaperInfo.url`` is required. Callers that normalise index records
+    recover via ``_try_paper_info`` so a missing URL drops that record.
     """
     if not value:
         msg = f"{context}: cannot normalise record without a URL"
         raise ValueError(msg)
     return value
+
+
+def _try_paper_info(build: Callable[[], PaperInfo]) -> PaperInfo | None:
+    """Build a ``PaperInfo``, returning ``None`` when domain constraints fail.
+
+    Recovers from field validation, open-access/PDF invariants, and
+    missing-URL ``ValueError`` from ``_require_url``. Other exceptions
+    propagate.
+    """
+    try:
+        return build()
+    except ValidationError, MissingOpenAccessPDFError, ValueError:
+        return None
 
 
 class _PubMedSearch:
@@ -130,8 +147,8 @@ class _PubMedSearch:
         Returns:
             A list of normalised ``PaperInfo`` objects, one per matched
             paper. May be shorter than *limit* (or empty) when the API
-            returns fewer matches, or when matched records lack a title
-            or abstract (silently dropped here).
+            returns fewer matches, or when matched records fail
+            ``PaperInfo`` constraints (dropped here).
         """
         clamped = max(_MIN_LIMIT, min(limit, 1000))
 
@@ -156,7 +173,16 @@ class _PubMedSearch:
 
         articles = await run_async(_search)
         articles = [a for a in articles if _PubMedSearch._has_title_and_abstract(a)]
-        return [_PubMedSearch._to_paper_info(a) for a in articles]
+        return [
+            paper
+            for article in articles
+            if (
+                paper := _try_paper_info(
+                    lambda a=article: _PubMedSearch._to_paper_info(a)
+                )
+            )
+            is not None
+        ]
 
     @staticmethod
     def _has_title_and_abstract(article: dict[str, Any]) -> bool:
@@ -248,8 +274,8 @@ class _CrossRefSearch:
         Returns:
             A list of normalised ``PaperInfo`` objects, one per matched
             work. May be shorter than *limit* (or empty) when the API
-            returns fewer matches, or when matched records lack a title
-            or abstract (silently dropped here).
+            returns fewer matches, or when matched records fail
+            ``PaperInfo`` constraints (dropped here).
         """
         clamped = max(_MIN_LIMIT, min(limit, 1000))
 
@@ -263,7 +289,16 @@ class _CrossRefSearch:
 
         items = await run_async(_search)
         items = [i for i in items if _CrossRefSearch._has_title_and_abstract(i)]
-        return [_CrossRefSearch._to_paper_info(i) for i in items]
+        return [
+            paper
+            for item in items
+            if (
+                paper := _try_paper_info(
+                    lambda i=item: _CrossRefSearch._to_paper_info(i)
+                )
+            )
+            is not None
+        ]
 
     @staticmethod
     def _has_title_and_abstract(item: dict[str, Any]) -> bool:
@@ -361,13 +396,22 @@ class _OpenAlexSearch:
         Returns:
             A list of normalised ``PaperInfo`` objects. May be shorter
             than *limit* (or empty) when the API returns fewer matches,
-            or when matched records lack title, abstract, or authors
-            (silently dropped here).
+            or when matched records fail ``PaperInfo`` constraints
+            (dropped here).
         """
         clamped = max(_MIN_LIMIT, min(limit, _OPENALEX_MAX_PER_PAGE))
         works = await self._fetch_works(query, per_page=clamped)
         works = [w for w in works if _OpenAlexSearch._is_complete(w)]
-        return [_OpenAlexSearch._to_paper_info(w) for w in works]
+        return [
+            paper
+            for work in works
+            if (
+                paper := _try_paper_info(
+                    lambda w=work: _OpenAlexSearch._to_paper_info(w)
+                )
+            )
+            is not None
+        ]
 
     async def _fetch_works(self, query: str, *, per_page: int) -> list[dict[str, Any]]:
         """Fetch raw work dicts from the OpenAlex Works search endpoint."""
@@ -537,7 +581,8 @@ class LiteratureSearch:
         Returns:
             A list of normalised ``PaperInfo`` objects returned by the
             chosen index.  May be shorter than *limit* (or empty) when
-            the index returns fewer matches.
+            the index returns fewer matches or when records fail
+            ``PaperInfo`` constraints.
 
         Raises:
             UnknownIndexError: If *search_index* is not a recognised

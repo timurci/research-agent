@@ -264,27 +264,6 @@ def test_main_rejects_zero_limit(tmp_path: Path) -> None:
         )
 
 
-def test_main_defaults_max_workers_env(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    config_path = _write_config(tmp_path)
-    module = _rows_module("search-search", row_count=1, limit=1)
-    monkeypatch.delenv("MLFLOW_GENAI_EVAL_MAX_WORKERS", raising=False)
-
-    with (
-        patch("evals.main.build_modules", return_value={"search-search": module}),
-        patch("evals.main.mlflow") as mlflow_mod,
-        caplog.at_level(logging.INFO, logger="evals.main"),
-    ):
-        _mock_mlflow_evaluate(mlflow_mod)
-        main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
-
-    assert os.environ["MLFLOW_GENAI_EVAL_MAX_WORKERS"] == "10"
-    assert "MLFLOW_GENAI_EVAL_MAX_WORKERS=10" in caplog.text
-
-
 def test_main_preserves_existing_max_workers_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

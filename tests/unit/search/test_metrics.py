@@ -67,38 +67,38 @@ def test_search_result_relevance_length_mismatch_takes_precedence_over_empty() -
 @pytest.mark.parametrize(
     ("values", "expected_passing", "expected_verdict", "expected_score"),
     [
-        ([0.7, 0.8, 0.9, 1.0], True, "Results are mostly high relevance.", 1.0),
-        ([0.3, 0.4, 0.5, 0.6], True, "Results are within acceptable bounds.", 0.5),
-        ([0.0, 0.1, 0.2, 0.29], False, "Too many low relevance results.", 0.0),
+        ([0.9, 0.95, 1.0, 0.91], True, "Results are mostly high relevance.", 1.0),
+        ([0.5, 0.6, 0.7, 0.8], True, "Results are within acceptable bounds.", 0.5),
+        ([0.0, 0.1, 0.2, 0.49], False, "Too many low relevance results.", 0.0),
         (
             [0.9, 0.8, 0.5, 0.4, 0.1],
             True,
             "Results are within acceptable bounds.",
-            0.6,
+            0.4,
         ),
         (
-            [0.9, 0.8, 0.7, 0.1],
+            [1.0, 0.95, 0.9, 0.4],
             True,
             "Results are mostly high relevance.",
             0.75,
+        ),
+        (
+            [0.9, 0.4, 0.3, 0.1],
+            False,
+            "Too many low relevance results.",
+            0.25,
         ),
         (
             [0.9, 0.8, 0.1, 0.1],
-            False,
-            "Too many low relevance results.",
-            0.5,
-        ),
-        (
-            [0.9, 0.8, 0.5, 0.5],
             True,
             "Results are within acceptable bounds.",
-            0.75,
+            0.375,
         ),
         (
-            [0.9, 0.8, 0.7, 0.5],
+            [0.9, 0.5, 0.5, 0.5],
             True,
-            "Results are mostly high relevance.",
-            0.875,
+            "Results are within acceptable bounds.",
+            0.625,
         ),
     ],
 )
@@ -119,9 +119,9 @@ def test_search_result_relevance_cases(
 @pytest.mark.parametrize(
     ("value", "tier"),
     [
-        (0.7, "HIGH"),
-        (0.3, "MEDIUM"),
-        (0.2999, "LOW"),
+        (0.9, "HIGH"),
+        (0.5, "MEDIUM"),
+        (0.4999, "LOW"),
     ],
 )
 def test_search_result_relevance_threshold_inclusion(value: float, tier: str) -> None:
@@ -250,12 +250,12 @@ def _expected_volume_score(count: int) -> float:
     ("count", "expected_passing"),
     [
         (0, False),
-        (4, False),
-        (5, True),
-        (12, True),
+        (14, False),
+        (15, True),
         (25, True),
-        (40, True),
         (50, True),
+        (60, True),
+        (75, True),
     ],
 )
 def test_search_result_count_steps(

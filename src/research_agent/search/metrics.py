@@ -14,15 +14,15 @@ from research_agent.shared.metric import EvaluationScore
 if TYPE_CHECKING:
     from research_agent.search.models import PaperInfo
 
-HIGH_RELEVANCE_THRESHOLD = 0.7
-MEDIUM_RELEVANCE_THRESHOLD = 0.3
+HIGH_RELEVANCE_THRESHOLD = 0.9
+MEDIUM_RELEVANCE_THRESHOLD = 0.5
 HIGH_RELEVANCE_SCORE = 1.0
 MEDIUM_RELEVANCE_SCORE = 0.5
 NDCG_AT_K = 10
-TARGET_RESULT_COUNT = 25
-MIN_PASS_RESULT_COUNT = 5
+TARGET_RESULT_COUNT = 50
+MIN_PASS_RESULT_COUNT = 15
 SCORE_AT_TARGET = 0.95
-OVERSHOOT_HALF_CREDIT = 25
+OVERSHOOT_HALF_CREDIT = 50
 MIN_RELEVANCE_GRADE = 0
 MAX_RELEVANCE_GRADE = 3
 
@@ -74,7 +74,7 @@ def search_result_relevance(
 
     metric_score = cumulative_metric_score / len(relevance_scores)
 
-    if counter["LOW"] > len(relevance_scores) * 0.25:
+    if counter["LOW"] > len(relevance_scores) * 0.5:
         passing = False
         verdict = "Too many low relevance results."
     elif counter["HIGH"] > len(relevance_scores) * 0.5:

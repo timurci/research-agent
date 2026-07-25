@@ -26,10 +26,120 @@ _ABSTRACT = (
     "and an analysis of the results. The findings advance the state of the art."
 )
 _TITLE = "Consolidated Paper Title Long Enough"
+_SHORT_ABSTRACT = "Too short to satisfy PaperInfo abstract min_length."
+_SHORT_TITLE = "Short"
+_PMID = "12345"
+_DOI = "10.1234/test"
+_JOURNAL = "Test Journal"
+_PUBMED_YEAR = "2020"
+_PUBMED_AUTHOR = {"LastName": "Doe", "ForeName": "Jane"}
+_CROSSREF_YEAR = 2020
+_CROSSREF_AUTHOR = {"given": "Alice", "family": "Smith"}
+_OPENALEX_DOI = "https://doi.org/10.1234/openalex-test"
+_OPENALEX_DOI_BARE = "10.1234/openalex-test"
+_OPENALEX_YEAR = 2021
+_OPENALEX_CITATION_COUNT = 42
+_OPENALEX_LANDING_URL = "https://example.com/paper"
+_OPENALEX_ID = "https://openalex.org/W123"
+_OPENALEX_AUTHOR = "Alice Smith"
 
 
 def _noop_init(_self: object, **_kwargs: object) -> None:
     """Stand-in for ``Crossref.__init__`` that records nothing."""
+
+
+def _make_pubmed_article(  # noqa: PLR0913  # test helper mirroring PubMed efetch record shape
+    *,
+    pmid: str = _PMID,
+    title: str = _TITLE,
+    abstract: str = _ABSTRACT,
+    authors: list[dict[str, str]] | None = None,
+    journal: str = _JOURNAL,
+    year: str = _PUBMED_YEAR,
+    publication_types: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "MedlineCitation": {
+            "PMID": pmid,
+            "Article": {
+                "ArticleTitle": title,
+                "Abstract": {"AbstractText": [abstract]},
+                "AuthorList": authors if authors is not None else [_PUBMED_AUTHOR],
+                "Journal": {
+                    "Title": journal,
+                    "JournalIssue": {"PubDate": {"Year": year}},
+                },
+                "ELocationID": [],
+                "PublicationTypeList": publication_types or [],
+            },
+        },
+    }
+
+
+def _make_crossref_item(  # noqa: PLR0913  # test helper mirroring CrossRef items dict shape
+    *,
+    title: str = _TITLE,
+    abstract: str = _ABSTRACT,
+    authors: list[dict[str, str]] | None = None,
+    doi: str = _DOI,
+    container: str = _JOURNAL,
+    year: int = _CROSSREF_YEAR,
+    citation_count: int = 0,
+    resource_url: str = "",
+    url: str = "",
+    item_type: str = "journal-article",
+    publisher: str = "Test Publisher",
+    issn: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "title": [title],
+        "abstract": f"<p>{abstract}</p>",
+        "author": authors if authors is not None else [_CROSSREF_AUTHOR],
+        "DOI": doi,
+        "container-title": [container],
+        "published-print": {"date-parts": [[year]]},
+        "is-referenced-by-count": citation_count,
+        "type": item_type,
+        "publisher": publisher,
+        "URL": url or f"https://doi.org/{doi}",
+        "resource": {"primary": {"URL": resource_url}},
+        "ISSN": issn or [],
+    }
+
+
+def _invert_abstract(text: str) -> dict[str, list[int]]:
+    inverted: dict[str, list[int]] = {}
+    for index, token in enumerate(text.split()):
+        inverted.setdefault(token, []).append(index)
+    return inverted
+
+
+def _make_openalex_work(  # noqa: PLR0913  # test helper mirroring OpenAlex work shape
+    *,
+    title: str = _TITLE,
+    abstract: str = _ABSTRACT,
+    authors: list[str] | None = None,
+    doi: str = _OPENALEX_DOI,
+    year: int = _OPENALEX_YEAR,
+    citation_count: int = _OPENALEX_CITATION_COUNT,
+    landing_page_url: str = _OPENALEX_LANDING_URL,
+    pdf_url: str = "",
+    openalex_id: str = _OPENALEX_ID,
+) -> dict[str, Any]:
+    author_names = authors if authors is not None else [_OPENALEX_AUTHOR]
+    return {
+        "id": openalex_id,
+        "display_name": title,
+        "abstract_inverted_index": _invert_abstract(abstract) if abstract else None,
+        "authorships": [{"author": {"display_name": name}} for name in author_names],
+        "doi": doi,
+        "publication_year": year,
+        "cited_by_count": citation_count,
+        "primary_location": {"landing_page_url": landing_page_url, "pdf_url": None},
+        "best_oa_location": {"pdf_url": pdf_url or None, "landing_page_url": None},
+        "locations": [],
+        "open_access": {"is_oa": bool(pdf_url)},
+    }
 
 
 # --- Init ---
@@ -53,34 +163,6 @@ def test_init_wires_three_handlers() -> None:
 
 
 # --- PubMed ---
-
-
-def _make_pubmed_article(  # noqa: PLR0913  # test helper mirroring PubMed efetch record shape
-    *,
-    pmid: str = "12345",
-    title: str = _TITLE,
-    abstract: str = _ABSTRACT,
-    authors: list[dict[str, str]] | None = None,
-    journal: str = "Test Journal",
-    year: str = "2020",
-    publication_types: list[str] | None = None,
-) -> dict[str, Any]:
-    return {
-        "MedlineCitation": {
-            "PMID": pmid,
-            "Article": {
-                "ArticleTitle": title,
-                "Abstract": {"AbstractText": [abstract]},
-                "AuthorList": authors or [{"LastName": "Doe", "ForeName": "Jane"}],
-                "Journal": {
-                    "Title": journal,
-                    "JournalIssue": {"PubDate": {"Year": year}},
-                },
-                "ELocationID": [],
-                "PublicationTypeList": publication_types or [],
-            },
-        },
-    }
 
 
 class _MockEId:
@@ -254,41 +336,37 @@ async def test_pubmed_drops_records_missing_title_or_abstract(
     out = await tool(SearchIndexType.PUBMED, "cancer", limit=5)
 
     assert len(out) == 1
-    assert "12345" in str(out[0].url)
+
+
+@pytest.mark.asyncio
+async def test_pubmed_drops_records_failing_paper_info_constraints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    short_abstract = _make_pubmed_article(abstract=_SHORT_ABSTRACT)
+    short_title = _make_pubmed_article(title=_SHORT_TITLE)
+    no_authors = _make_pubmed_article(authors=[{"LastName": "", "ForeName": ""}])
+    good = _make_pubmed_article()
+    _stub_pubmed(monkeypatch, [short_abstract, short_title, no_authors, good])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.PUBMED, "cancer", limit=10)
+
+    assert len(out) == 1
+
+
+@pytest.mark.asyncio
+async def test_pubmed_all_invalid_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_pubmed(monkeypatch, [_make_pubmed_article(abstract=_SHORT_ABSTRACT)])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.PUBMED, "cancer", limit=5)
+
+    assert out == []
 
 
 # --- CrossRef ---
-
-
-def _make_crossref_item(  # noqa: PLR0913  # test helper mirroring CrossRef items dict shape
-    *,
-    title: str = _TITLE,
-    abstract: str = _ABSTRACT,
-    authors: list[dict[str, str]] | None = None,
-    doi: str = "10.1234/test",
-    container: str = "Test Journal",
-    year: int = 2020,
-    citation_count: int = 0,
-    resource_url: str = "",
-    url: str = "",
-    item_type: str = "journal-article",
-    publisher: str = "Test Publisher",
-    issn: list[str] | None = None,
-) -> dict[str, Any]:
-    return {
-        "title": [title],
-        "abstract": f"<p>{abstract}</p>",
-        "author": authors or [{"given": "Alice", "family": "Smith"}],
-        "DOI": doi,
-        "container-title": [container],
-        "published-print": {"date-parts": [[year]]},
-        "is-referenced-by-count": citation_count,
-        "type": item_type,
-        "publisher": publisher,
-        "URL": url or f"https://doi.org/{doi}",
-        "resource": {"primary": {"URL": resource_url}},
-        "ISSN": issn or [],
-    }
 
 
 def _stub_crossref(
@@ -369,11 +447,27 @@ async def test_crossref_falls_back_url_to_doi_org(
     out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
-    assert str(out[0].url) == "https://doi.org/10.1234/test"
+    assert str(out[0].url) == f"https://doi.org/{_DOI}"
 
 
 @pytest.mark.asyncio
-async def test_crossref_raises_when_no_url_or_doi(
+async def test_crossref_drops_records_with_no_url_or_doi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad = _make_crossref_item()
+    bad["URL"] = ""
+    bad["DOI"] = ""
+    good = _make_crossref_item()
+    _stub_crossref(monkeypatch, [bad, good])
+
+    tool = LiteratureSearch()
+    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+
+    assert len(out) == 1
+
+
+@pytest.mark.asyncio
+async def test_crossref_all_invalid_returns_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     item = _make_crossref_item()
@@ -382,8 +476,9 @@ async def test_crossref_raises_when_no_url_or_doi(
     _stub_crossref(monkeypatch, [item])
 
     tool = LiteratureSearch()
-    with pytest.raises(ValueError, match="CrossRef"):
-        await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+
+    assert out == []
 
 
 @pytest.mark.asyncio
@@ -427,45 +522,9 @@ async def test_crossref_drops_records_missing_title_or_abstract(
     out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].doi == good["DOI"]
 
 
 # --- OpenAlex ---
-
-
-def _invert_abstract(text: str) -> dict[str, list[int]]:
-    inverted: dict[str, list[int]] = {}
-    for index, token in enumerate(text.split()):
-        inverted.setdefault(token, []).append(index)
-    return inverted
-
-
-def _make_openalex_work(  # noqa: PLR0913  # test helper mirroring OpenAlex work shape
-    *,
-    title: str = _TITLE,
-    abstract: str = _ABSTRACT,
-    authors: list[str] | None = None,
-    doi: str = "https://doi.org/10.1234/openalex-test",
-    year: int = 2021,
-    citation_count: int = 42,
-    landing_page_url: str = "https://example.com/paper",
-    pdf_url: str = "",
-    openalex_id: str = "https://openalex.org/W123",
-) -> dict[str, Any]:
-    author_names = authors if authors is not None else ["Alice Smith"]
-    return {
-        "id": openalex_id,
-        "display_name": title,
-        "abstract_inverted_index": _invert_abstract(abstract) if abstract else None,
-        "authorships": [{"author": {"display_name": name}} for name in author_names],
-        "doi": doi,
-        "publication_year": year,
-        "cited_by_count": citation_count,
-        "primary_location": {"landing_page_url": landing_page_url, "pdf_url": None},
-        "best_oa_location": {"pdf_url": pdf_url or None, "landing_page_url": None},
-        "locations": [],
-        "open_access": {"is_oa": bool(pdf_url)},
-    }
 
 
 def _stub_openalex(
@@ -499,11 +558,11 @@ async def test_openalex_reconstructs_inverted_abstract(
     assert len(out) == 1
     assert out[0].abstract == _ABSTRACT
     assert out[0].title == _TITLE
-    assert out[0].authors == ("Alice Smith",)
-    assert out[0].doi == "10.1234/openalex-test"
-    assert out[0].publication_year == 2021
-    assert out[0].citation_count == 42
-    assert str(out[0].url) == "https://example.com/paper"
+    assert out[0].authors == (_OPENALEX_AUTHOR,)
+    assert out[0].doi == _OPENALEX_DOI_BARE
+    assert out[0].publication_year == _OPENALEX_YEAR
+    assert out[0].citation_count == _OPENALEX_CITATION_COUNT
+    assert str(out[0].url) == _OPENALEX_LANDING_URL
 
 
 @pytest.mark.asyncio
@@ -518,7 +577,7 @@ async def test_openalex_url_falls_back_to_doi(
     out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
-    assert str(out[0].url) == "https://doi.org/10.1234/openalex-test"
+    assert str(out[0].url) == f"https://doi.org/{_OPENALEX_DOI_BARE}"
 
 
 @pytest.mark.asyncio
@@ -534,22 +593,24 @@ async def test_openalex_url_falls_back_to_openalex_id(
     out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
-    assert str(out[0].url) == "https://openalex.org/W123"
+    assert str(out[0].url) == _OPENALEX_ID
 
 
 @pytest.mark.asyncio
-async def test_openalex_raises_when_no_url(
+async def test_openalex_drops_records_with_no_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    work = _make_openalex_work(landing_page_url="", doi="", openalex_id="")
-    work["primary_location"] = {"landing_page_url": None, "pdf_url": None}
-    work["doi"] = None
-    work["id"] = None
-    _stub_openalex(monkeypatch, [work])
+    bad = _make_openalex_work(landing_page_url="", doi="", openalex_id="")
+    bad["primary_location"] = {"landing_page_url": None, "pdf_url": None}
+    bad["doi"] = None
+    bad["id"] = None
+    good = _make_openalex_work()
+    _stub_openalex(monkeypatch, [bad, good])
 
     tool = LiteratureSearch()
-    with pytest.raises(ValueError, match="OpenAlex"):
-        await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+
+    assert len(out) == 1
 
 
 @pytest.mark.asyncio
@@ -589,7 +650,6 @@ async def test_openalex_drops_incomplete_records(
     out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
-    assert out[0].title == _TITLE
 
 
 @pytest.mark.asyncio

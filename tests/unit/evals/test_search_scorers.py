@@ -104,30 +104,30 @@ def test_count_scorer_below_pass_floor() -> None:
     assert isinstance(feedback, Feedback)
     assert feedback.name == "search_result_count"
     assert feedback.value is False
-    assert feedback.metadata == {"score": str(0.95 * 2 / 25)}
+    assert feedback.metadata == {"score": str(0.95 * 2 / 50)}
     assert "Returned 2 results" in (feedback.rationale or "")
     assert feedback.source is not None
     assert feedback.source.source_id == "research_agent.search.metrics"
 
 
 def test_count_scorer_pass_with_partial_score() -> None:
-    outputs = [_make_paper(f"Paper Number {i:03d}") for i in range(10)]
+    outputs = [_make_paper(f"Paper Number {i:03d}") for i in range(20)]
     feedback = search_result_count_scorer(outputs=outputs)
 
     assert isinstance(feedback, Feedback)
     assert feedback.value is True
-    assert feedback.metadata == {"score": str(0.95 * 10 / 25)}
-    assert "Returned 10 results" in (feedback.rationale or "")
+    assert feedback.metadata == {"score": str(0.95 * 20 / 50)}
+    assert "Returned 20 results" in (feedback.rationale or "")
 
 
 def test_count_scorer_meets_target() -> None:
-    outputs = [_make_paper(f"Paper Number {i:03d}") for i in range(25)]
+    outputs = [_make_paper(f"Paper Number {i:03d}") for i in range(50)]
     feedback = search_result_count_scorer(outputs=outputs)
 
     assert isinstance(feedback, Feedback)
     assert feedback.value is True
     assert feedback.metadata == {"score": "0.95"}
-    assert "target 25 met" in (feedback.rationale or "")
+    assert "target 50 met" in (feedback.rationale or "")
 
 
 def test_relevance_metrics_from_ranking_aligns_by_index() -> None:
@@ -183,7 +183,7 @@ def test_search_result_relevance_scorer_uses_reranker() -> None:
     assert isinstance(feedback, Feedback)
     assert feedback.name == "search_result_relevance"
     assert feedback.value is True
-    assert feedback.metadata == {"score": "1.0"}
+    assert feedback.metadata == {"score": "0.75"}
     assert len(fake.calls) == 1
     assert fake.calls[0][0] == query
     assert fake.calls[0][1] == papers

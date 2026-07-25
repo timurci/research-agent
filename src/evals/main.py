@@ -143,7 +143,7 @@ def _apply_mlflow_eval_env_defaults() -> None:
         )
 
     workers_key = "MLFLOW_GENAI_EVAL_MAX_WORKERS"
-    workers_default = "10"
+    workers_default = "5"
     if os.environ.setdefault(workers_key, workers_default) == workers_default:
         logger.info(
             "Limiting MLflow genai.evaluate concurrency (%s=%s); "

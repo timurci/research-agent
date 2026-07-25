@@ -77,6 +77,19 @@ def test_paper_info_authors_coerced_from_list_to_tuple() -> None:
     assert paper.authors == ("Alice", "Bob")
 
 
+def test_paper_info_truncates_abstract_to_max_length() -> None:
+    long_abstract = "A" * 4000
+    paper = PaperInfo(
+        title=_TITLE,
+        abstract=long_abstract,
+        authors=("Alice",),
+        url=HttpUrl("https://example.com/paper"),
+        open_access=False,
+    )
+    assert len(paper.abstract) == 3072
+    assert paper.abstract == long_abstract[:3072]
+
+
 def test_paper_info_open_access_requires_pdf_url() -> None:
     with pytest.raises(MissingOpenAccessPDFError):
         PaperInfo(

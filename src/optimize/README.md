@@ -80,7 +80,7 @@ programs are written to `data/optimize/output/<module>.json`.
 - Does **not** import `evals` (sibling tooling; independent adapters).
 - Runtime `research_agent` never imports `optimize`.
 - Same domain metrics as `evals`; different harness (GEPA vs MLflow).
-- Evals may run `search-e2e`; optimize does **not** register an e2e module.
+- Evals runs `search-search` only; optimize does **not** register an e2e module.
 
 ## Notes
 

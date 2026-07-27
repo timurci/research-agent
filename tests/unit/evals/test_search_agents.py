@@ -8,10 +8,9 @@ from unittest.mock import patch
 import pytest
 from pydantic import HttpUrl
 
-from evals.search.agents import paper_search_workflow, reranker, search_agent
+from evals.search.agents import reranker, search_agent
 from research_agent.search.agents import Reranker
 from research_agent.search.models import ResearchQuery
-from research_agent.search.workflows import PaperSearchWorkflow
 from research_agent.shared.config.models import LMConfig
 from research_agent.shared.session import InMemorySession
 
@@ -36,14 +35,6 @@ def test_search_agent_is_callable() -> None:
 
 def test_reranker_returns_reranker() -> None:
     assert isinstance(reranker(lm_config=_RERANK_CONFIG), Reranker)
-
-
-def test_paper_search_workflow_returns_workflow() -> None:
-    workflow = paper_search_workflow(
-        search_lm_config=_SEARCH_CONFIG,
-        rerank_lm_config=_RERANK_CONFIG,
-    )
-    assert isinstance(workflow, PaperSearchWorkflow)
 
 
 @pytest.mark.asyncio
@@ -169,47 +160,3 @@ def test_reranker_uses_injected_lm_config() -> None:
         reranker(lm_config=custom)
 
     assert reranker_cls.call_args.args[0] is custom
-
-
-@pytest.mark.asyncio
-async def test_paper_search_workflow_forwards_lm_configs() -> None:
-    search_config = LMConfig(
-        model="openai/workflow-search",
-        api_key="search-key",
-        base_url=HttpUrl("http://search.example/v1"),
-    )
-    rerank_config = LMConfig(
-        model="infinity/workflow-rerank",
-        api_key="rerank-key",
-        base_url=HttpUrl("http://rerank.example/v1"),
-    )
-    captured_search: list[tuple[LMConfig, object]] = []
-
-    class _StubSearchAgent:
-        def __init__(
-            self,
-            lm_config: LMConfig,
-            _session: object,
-            _lit_search: object,
-            *,
-            instructions_path: object = None,
-        ) -> None:
-            captured_search.append((lm_config, instructions_path))
-
-        async def __call__(self, _data: ResearchQuery) -> list[PaperInfo]:
-            return []
-
-    with (
-        patch("evals.search.agents.SearchAgent", _StubSearchAgent),
-        patch("evals.search.agents.Reranker") as reranker_cls,
-    ):
-        reranker_cls.return_value = object()
-        workflow = paper_search_workflow(
-            search_lm_config=search_config,
-            rerank_lm_config=rerank_config,
-        )
-        assert isinstance(workflow, PaperSearchWorkflow)
-        await workflow(ResearchQuery(text="workflow lm config forward check"))
-
-    assert captured_search == [(search_config, None)]
-    assert reranker_cls.call_args.args[0] is rerank_config

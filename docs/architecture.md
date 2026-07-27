@@ -30,7 +30,7 @@ slices depend only on shared + external libs
 
 ## Seams
 
-**`Agent[InputT, OutputT]`** — the single generic LM port (`async def __call__(data: InputT) -> OutputT`). Type variables are unbounded so outputs may be containers (`list[PaperInfo]`). Boundary validation comes from typing signature fields as domain models, not from bounding the port. The seam is where provider swap, offline fakes, and unit tests attach.
+**`Agent[InputT, OutputT]`** — the single generic LM port (`async def __call__(data: InputT) -> OutputT`). Type variables are unbounded so outputs may be containers or tuples (`list[PaperInfo]`, `tuple[list[PaperInfo], str]`). Boundary validation comes from typing signature fields as domain models, not from bounding the port. The seam is where provider swap, offline fakes, and unit tests attach.
 
 **`Session`** — application port for session-scoped key/value working memory (not a domain repository). Default adapter: `InMemorySession` in the same module.
 

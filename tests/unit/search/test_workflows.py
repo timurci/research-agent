@@ -55,38 +55,66 @@ class _FakeReranker:
         return list(self._reordered)
 
 
+class _FakeSuggestionGenerator:
+    """In-memory fake of the suggestion generator agent port."""
+
+    def __init__(self, suggestion: str) -> None:
+        self.calls: list[tuple[ResearchQuery, list[PaperInfo]]] = []
+        self._suggestion = suggestion
+
+    async def __call__(
+        self,
+        data: tuple[ResearchQuery, list[PaperInfo]],
+    ) -> str:
+        self.calls.append(data)
+        return self._suggestion
+
+
 def _query() -> ResearchQuery:
     return ResearchQuery(text="quantum computing")
 
 
 @pytest.mark.asyncio
-async def test_returns_reranked_results() -> None:
+async def test_returns_reranked_results_and_suggestion() -> None:
     a, b, c = _paper(_TITLE_A), _paper(_TITLE_B), _paper(_TITLE_C)
     results = [a, b, c]
     reordered = [results[2], results[0], results[1]]
-    workflow = PaperSearchWorkflow(_FakeSearchAgent(results), _FakeReranker(reordered))
+    workflow = PaperSearchWorkflow(
+        _FakeSearchAgent(results),
+        _FakeReranker(reordered),
+        _FakeSuggestionGenerator("focus on quantum error correction"),
+    )
 
-    out = await workflow(_query())
+    papers, suggestion = await workflow(_query())
 
-    assert out == reordered
+    assert papers == reordered
+    assert suggestion == "focus on quantum error correction"
 
 
 @pytest.mark.asyncio
-async def test_skips_rerank_on_empty_results() -> None:
-    search, rerank = _FakeSearchAgent([]), _FakeReranker([])
-    workflow = PaperSearchWorkflow(search, rerank)
+async def test_skips_rerank_and_suggest_on_empty_results() -> None:
+    search = _FakeSearchAgent([])
+    rerank = _FakeReranker([])
+    suggest = _FakeSuggestionGenerator("")
+    workflow = PaperSearchWorkflow(search, rerank, suggest)
 
-    out = await workflow(_query())
+    papers, suggestion = await workflow(_query())
 
-    assert out == []
+    assert papers == []
+    assert suggestion == ""
     assert rerank.calls == []
+    assert suggest.calls == []
 
 
 @pytest.mark.asyncio
 async def test_passes_query_to_search_agent() -> None:
     query = _query()
-    search, rerank = _FakeSearchAgent([]), _FakeReranker([])
-    workflow = PaperSearchWorkflow(search, rerank)
+    search, rerank, suggest = (
+        _FakeSearchAgent([]),
+        _FakeReranker([]),
+        _FakeSuggestionGenerator(""),
+    )
+    workflow = PaperSearchWorkflow(search, rerank, suggest)
 
     await workflow(query)
 
@@ -97,9 +125,26 @@ async def test_passes_query_to_search_agent() -> None:
 async def test_passes_query_and_results_to_reranker() -> None:
     query = _query()
     results = [_paper(_TITLE_A)]
-    search, rerank = _FakeSearchAgent(results), _FakeReranker(results)
-    workflow = PaperSearchWorkflow(search, rerank)
+    search, rerank, suggest = (
+        _FakeSearchAgent(results),
+        _FakeReranker(results),
+        _FakeSuggestionGenerator(""),
+    )
+    workflow = PaperSearchWorkflow(search, rerank, suggest)
 
     await workflow(query)
 
     assert rerank.calls == [(query, results)]
+
+
+@pytest.mark.asyncio
+async def test_passes_top_ten_papers_to_suggestion_generator() -> None:
+    query = _query()
+    results = [_paper(f"Research Paper Number {i:02d}") for i in range(15)]
+    search, rerank = _FakeSearchAgent(results), _FakeReranker(results)
+    suggest = _FakeSuggestionGenerator("suggest")
+    workflow = PaperSearchWorkflow(search, rerank, suggest)
+
+    await workflow(query)
+
+    assert suggest.calls == [(query, results[:10])]

@@ -3,8 +3,8 @@
 Usage::
 
     uv run -m evals.main --list
-    uv run -m evals.main --experiment my-exp search-e2e search-search
-    uv run -m evals.main --experiment my-exp --tracking-uri ./mlruns search-e2e
+    uv run -m evals.main --experiment my-exp search-search
+    uv run -m evals.main --experiment my-exp --tracking-uri ./mlruns search-search
     uv run -m evals.main --experiment my-exp --config config/lm.yaml search-search
     uv run -m evals.main --experiment my-exp --limit 5 --seed 7 search-search
 """

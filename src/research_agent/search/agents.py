@@ -75,6 +75,21 @@ class SearchAgentSignature(dspy.Signature):
     )
 
 
+class SuggestionGeneratorSignature(dspy.Signature):
+    """Generate a practical manual research direction from the top papers.
+
+    Given a research query and the most relevant papers found, write a
+    concise, actionable suggestion for how a human researcher should
+    proceed. Focus on practical next steps, not a full literature review.
+    """
+
+    research_query: ResearchQuery = dspy.InputField()
+    papers: list[PaperInfo] = dspy.InputField()
+    suggestion: str = dspy.OutputField(
+        desc="Concise, practical research direction based on the papers",
+    )
+
+
 def build_search_react(session_search: SessionLiteratureSearch) -> dspy.ReAct:
     """Build the search ReAct program bound to a session-backed tool.
 
@@ -116,6 +131,31 @@ class _SearchProgram(dspy.Module):
     async def aforward(self, research_query: ResearchQuery) -> SearchOutcome:
         prediction = await self.react.aforward(research_query=research_query)
         return SearchOutcome(prediction.status)
+
+
+class _SuggestionGeneratorProgram(dspy.Module):
+    """Runtime DSPy module wrapping the suggestion generator predictor.
+
+    Mirrors the shape of a future GEPA-optimized suggestion program so
+    saved program JSON can be loaded onto the runtime agent's predictor
+    via ``dspy.Module.load``.
+    """
+
+    def __init__(self) -> None:
+        """Build the program with an owned predictor."""
+        super().__init__()
+        self.predict = dspy.Predict(SuggestionGeneratorSignature)
+
+    async def aforward(
+        self,
+        research_query: ResearchQuery,
+        papers: list[PaperInfo],
+    ) -> str:
+        prediction = await self.predict.aforward(
+            research_query=research_query,
+            papers=papers,
+        )
+        return prediction.suggestion
 
 
 class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
@@ -209,3 +249,44 @@ class Reranker(Agent[tuple[ResearchQuery, list[PaperInfo]], list[PaperInfo]]):
             extra_body=self._provider_config,
         )
         return ranking.results
+
+
+class SuggestionGenerator(
+    Agent[tuple[ResearchQuery, list[PaperInfo]], str],
+):
+    """Suggestion generator agent that produces a manual research direction."""
+
+    def __init__(
+        self,
+        lm_config: LMConfig,
+        *,
+        instructions_path: Path | None = None,
+    ) -> None:
+        """Initialize the suggestion generator agent.
+
+        Args:
+            lm_config: The language model to use.
+            instructions_path: Optional path to a saved DSPy program whose
+                optimized instructions are loaded onto the predictor.
+        """
+        self._lm = dspy.LM(
+            model=lm_config.model,
+            api_key=lm_config.api_key,
+            api_base=str(lm_config.base_url) if lm_config.base_url else None,
+            extra_body=lm_config.provider_config,
+        )
+        self._program = _SuggestionGeneratorProgram()
+        if instructions_path is not None:
+            self._program.load(str(instructions_path))
+
+    async def __call__(
+        self,
+        data: tuple[ResearchQuery, list[PaperInfo]],
+    ) -> str:
+        """Generate a research-direction suggestion from the top papers."""
+        query, papers = data
+        with dspy.settings.context(lm=self._lm):
+            return await self._program.aforward(
+                research_query=query,
+                papers=papers,
+            )

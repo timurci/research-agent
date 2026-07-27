@@ -13,8 +13,9 @@ Given a research question, the agent:
 1. **Generates** better search queries from your question
 2. **Searches** multiple scholarly indexes in parallel
 3. **Refines** results by iterating — trying new queries, dropping dead ends, and improving what it finds through a ReAct-style loop
+4. **Suggests** a practical research direction from the top results
 
-That loop is the core idea: not a single-shot keyword lookup, but an agent that keeps searching until it has a strong set of papers.
+That loop is the core idea: not a single-shot keyword lookup, but an agent that keeps searching until it has a strong set of papers, plus a concise suggestion for what to do next.
 
 This is the feature under active development. More research capabilities will follow later.
 

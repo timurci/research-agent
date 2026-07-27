@@ -22,7 +22,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.config.models import LMConfig
 
 DEFAULT_LM_CONFIG_PATH = Path("config/lm.yaml")
 

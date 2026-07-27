@@ -12,7 +12,7 @@ import dspy
 from .metric import ToolCallObservation
 
 if TYPE_CHECKING:
-    from .agent import LMConfig
+    from .config.models import LMConfig
 
 
 def dspy_lm(lm_config: LMConfig) -> dspy.LM:

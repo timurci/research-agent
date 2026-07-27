@@ -12,7 +12,7 @@ from evals.search.agents import paper_search_workflow, reranker, search_agent
 from research_agent.search.agents import Reranker
 from research_agent.search.models import ResearchQuery
 from research_agent.search.workflows import PaperSearchWorkflow
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.config.models import LMConfig
 from research_agent.shared.session import InMemorySession
 
 if TYPE_CHECKING:

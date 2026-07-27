@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     import dspy
     from dspy.teleprompt.gepa.gepa_utils import ScoreWithFeedback
 
-    from research_agent.shared.agent import LMConfig
+    from research_agent.shared.config.models import LMConfig
 
 MODULE_NAMES: frozenset[str] = frozenset({"search-search"})
 

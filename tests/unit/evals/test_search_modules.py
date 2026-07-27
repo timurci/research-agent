@@ -19,7 +19,7 @@ from evals.search.modules import (
 )
 from evals.search.scorers import search_query_scorers
 from research_agent.search.models import PaperInfo, ResearchQuery
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.config.models import LMConfig
 
 _ABSTRACT = (
     "A sufficiently long abstract describing the research methodology, "

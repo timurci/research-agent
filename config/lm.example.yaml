@@ -1,5 +1,5 @@
 # Copy to config/lm.yaml and edit for local endpoints.
-# Roles are validated as research_agent.shared.agent.LMConfig fields.
+# Roles are validated as research_agent.shared.config.models.LMConfig fields.
 # Optional provider_config is forwarded to LiteLLM as extra_body.
 
 search-search:

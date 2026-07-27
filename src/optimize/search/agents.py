@@ -40,11 +40,13 @@ from research_agent.search.agents import (
 from research_agent.search.tools import LiteratureSearch, SessionLiteratureSearch
 from research_agent.shared.config.lm import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
 from research_agent.shared.config.lm import lm_config as load_lm_config
-from research_agent.shared.session import InMemorySession, ScopedSession
+from research_agent.shared.scoped_session import ScopedSession
+from research_agent.shared.session import InMemorySession
 
 if TYPE_CHECKING:
     from research_agent.search.models import PaperInfo, ResearchQuery
-    from research_agent.shared.agent import Agent, LMConfig
+    from research_agent.shared.agent import Agent
+    from research_agent.shared.config.models import LMConfig
     from research_agent.shared.session import Session
 
 

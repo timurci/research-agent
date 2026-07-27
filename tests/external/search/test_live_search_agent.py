@@ -19,7 +19,7 @@ from research_agent.search.tools import LiteratureSearch
 from research_agent.shared.session import InMemorySession
 
 if TYPE_CHECKING:
-    from research_agent.shared.agent import LMConfig
+    from research_agent.shared.config.models import LMConfig
 
 _TIMEOUT_SECONDS: float = 30.0
 

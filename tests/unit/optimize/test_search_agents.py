@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import logging
 from unittest.mock import MagicMock, patch
 
 import dspy
@@ -117,3 +119,39 @@ def test_relevance_labeler_uses_injected_lm_config() -> None:
         relevance_labeler(lm_config=custom)
 
     assert reranker_cls.call_args.args[0] is custom
+
+
+def test_search_program_deepcopy_emits_no_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    program = SearchProgram(lm_config=_SEARCH_CONFIG)
+
+    with caplog.at_level(logging.WARNING, logger="root"):
+        copy.deepcopy(program)
+
+    deep_copy_warnings = [
+        record for record in caplog.records if "Failed to deep copy" in record.message
+    ]
+    assert deep_copy_warnings == []
+
+
+def test_search_program_deepcopy_preserves_predictor_state() -> None:
+    program = SearchProgram(lm_config=_SEARCH_CONFIG)
+    original_predictors = list(program.named_predictors())
+    original_pred = original_predictors[0][1]
+    original_signature = original_pred.signature
+    original_instructions = original_signature.instructions
+
+    copy_program = copy.deepcopy(program)
+    copy_predictors = list(copy_program.named_predictors())
+    copy_pred = copy_predictors[0][1]
+    copy_signature = copy_pred.signature
+
+    assert copy_predictors[0][0] == original_predictors[0][0]
+    assert copy_pred is not original_pred
+    assert copy_signature is original_signature
+    assert copy_signature.instructions == original_instructions
+
+    copy_pred.signature = copy_signature.with_instructions("MUTATED IN COPY")
+    assert original_pred.signature is original_signature
+    assert original_signature.instructions == original_instructions

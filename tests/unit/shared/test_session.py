@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from research_agent.shared.session import InMemorySession, ScopedSession
@@ -101,3 +103,31 @@ def test_scoped_nested_use_restores_outer() -> None:
             assert scoped.get("k") == "inner"
         assert scoped.get("k") == "outer"
     assert scoped.get("k") == "base"
+
+
+def test_scoped_deepcopy_creates_independent_instance_with_fresh_local() -> None:
+    base = InMemorySession()
+    base.set("k", "base")
+    scoped = ScopedSession(base)
+
+    copy_scoped = copy.deepcopy(scoped)
+
+    assert copy_scoped is not scoped
+    assert copy_scoped._base is not scoped._base
+    assert copy_scoped._local is not scoped._local
+    assert isinstance(copy_scoped._local, threading.local)
+    assert copy_scoped.get("k") == "base"
+
+
+def test_scoped_deepcopy_thread_overrides_do_not_leak_to_copy() -> None:
+    base = InMemorySession()
+    base.set("k", "base")
+    scoped = ScopedSession(base)
+
+    copy_scoped = copy.deepcopy(scoped)
+    fresh = InMemorySession()
+    fresh.set("k", "override")
+
+    with scoped.use(fresh):
+        assert scoped.get("k") == "override"
+        assert copy_scoped.get("k") == "base"

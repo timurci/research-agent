@@ -19,6 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import dspy
 import mlflow
 
 from evals.harness import EVAL_SEED, sample_rows
@@ -153,6 +154,19 @@ def _apply_mlflow_eval_env_defaults() -> None:
         )
 
 
+def _disable_dspy_disk_cache() -> None:
+    """Disable DSPy on-disk cache so each evals run re-evaluates responses.
+
+    DSPy enables a process-global disk cache at import time
+    (``dspy.cache`` with ``enable_disk_cache=True``). For evals this
+    hides metric changes across runs because identical prompts return
+    cached responses from a previous invocation. In-memory cache is
+    left on so repeated prompts within the same run are still cheap.
+    """
+    dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=True)
+    logger.info("Disabled DSPy on-disk cache for evals; in-memory cache retained")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Parse CLI args and run selected evaluation modules."""
     parser = _build_parser()
@@ -185,6 +199,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     mlflow.set_experiment(args.experiment)
 
     _apply_mlflow_eval_env_defaults()
+    _disable_dspy_disk_cache()
 
     for name in args.modules:
         _run_module(modules[name], seed=args.seed)

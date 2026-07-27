@@ -1,16 +1,16 @@
 # src/optimize
 
-DSPy **GEPA** optimization pipeline for research-agent capabilities.
+DSPy **GEPA** optimization tooling for research-agent capabilities.
 
 This package is tooling, not part of the runtime application. It mirrors
 `src/evals` structurally: capability slices under `optimize/<slice>/`,
 Hugging Face query datasets, and adapters that **consume domain metrics**
-without redefining “good.”
+without redefining "good."
 
 ## Scope
 
 | Optimized | Not optimized |
-|-----------|----------------|
+|-----------|---------------|
 | Search agent (one GEPA student step) | Reranker |
 | | Search→rerank e2e workflow |
 
@@ -22,47 +22,44 @@ optimization targets here.
 ```text
 optimize/
   feedback.py           # EvaluationScore → GEPA ScoreWithFeedback
-  main.py               # CLI: load trainset, compile SearchProgram with GEPA, save
-  search/
-    dataset.py          # HF train split → dspy.Example(research_query=…)
-    metrics.py          # DSPy/GEPA metric adapters over domain metrics
-    agents.py           # SearchProgram student (owned ReAct); relevance labeler
+  main.py               # CLI entrypoint: load configs, wire modules, run GEPA, save
+  search/               # Search-agent optimization slice
+    dataset.py          # HF train split → dspy.Example
+    metrics.py          # GEPA metric adapters over domain metrics
+    agents.py           # SearchProgram student
     program.py          # re-export of SearchProgram
-    modules.py          # named OptimizeModule registry (`search-search` only)
+    modules.py          # OptimizeModule registry
 ```
 
-Student: `optimize.search.agents.SearchProgram` — `dspy.Module` with
-`self.react` (`SearchAgentSignature` ReAct), sync `forward` (GEPA path),
-per-call session isolation, prediction field `search_results`.
+## Main entrypoint (`main.py`)
 
-## Metric contract (GEPA)
+`optimize.main` is the command-line harness for running GEPA on a registered
+`OptimizeModule`. At a high level it:
 
-Domain metrics return `EvaluationScore` (`passing`, `reason`, `score` in
-`[0, 1]`). Adapters map them to `ScoreWithFeedback`:
+1. Parses CLI arguments (`--config`, `--limit`, `--seed`, `--out-dir`,
+   `--auto`, module names, or `--list`).
+2. Loads LM configurations from `config/lm.yaml` for the student,
+   the metric labeler, and the GEPA reflection teacher.
+3. Builds the requested modules via `build_modules(...)`, injecting the
+   loaded LM configs into each module's factories.
+4. For each module:
+   - Loads the HF **train** split.
+   - Optionally subsamples to `--limit` examples.
+   - Splits the pool into train (reflection) and val (Pareto) sets.
+   - Builds the student and compiles it with `dspy.GEPA`.
+   - Saves the compiled program to `data/optimize/output/<module>.json`.
 
-- **score** — continuous domain `.score` (GEPA objective)
-- **feedback** — text built from pass/fail + `.reason` (GEPA reflection)
-
-Search-agent optimization uses one GEPA metric, `search_query_metric`,
-which averages three domain metrics and concatenates their feedback:
-
-- `search_result_count`
-- `search_result_relevance` (labels from a held-out **relevance labeler**,
-  not from the student)
-
-GEPA callables accept five arguments:
-`(gold, pred, trace, pred_name, pred_trace)`.
-
-Predictions must expose agent-level `search_results: list[PaperInfo]`
-(session bag after tool use). Signature `status` is diagnostic only and
-is not scored here.
+Live index calls (PubMed, CrossRef, OpenAlex) happen inside the search
+student during optimization.
 
 ## Dataset
 
 - Path: Hugging Face `tcakmako/research_queries`
 - Source split: **`train`** only (evals uses **`test`**; never mixed into GEPA)
-- Default pool: sample **50** examples, then **80/20** → **40 train** (reflection) / **10 val** (Pareto)
-- Shape: `dspy.Example(research_query=ResearchQuery).with_inputs("research_query")`
+- Default pool: sample **50** examples
+- Split: pool-size-aware — **50/50** below **200** examples, **80/20**
+  at or above. The threshold keeps GEPA's val (Pareto) set meaningful
+  when total examples are scarce.
 - `--limit N` overrides the pool size before the train/val split
 
 ## How to run
@@ -90,8 +87,7 @@ programs are written to `data/optimize/output/<module>.json`.
 - Live optimization will call PubMed, CrossRef, and OpenAlex inside the
   search student — slow and costly; use `--limit` for smoke runs.
 - GEPA invokes the metric once when scoring candidates and again when
-  building the reflective dataset, so the relevance labeler LM runs
-  roughly twice per example per iteration (the two runs can disagree;
-  DSPy keeps the module-level score).
+  building the reflective dataset, so the labeler LM runs roughly twice
+  per example per iteration.
 - Relevance is labeled by a held-out reranker LM (bootstrap signal), not
   by optimizing the reranker itself.

@@ -13,6 +13,7 @@ title/abstract cards for newly added hits.
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 from urllib.parse import urlencode
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 _MAX_LIMIT: int = 100
 _MIN_LIMIT: int = 1
 _OPENALEX_MAX_PER_PAGE: int = 100
+_RERANK_MAX_ABSTRACT_CHARS: int = 2048
 
 _DEFAULT_MAILTO: str = "research-agent@example.com"
 _STRIP_JATS = re.compile(r"<[^>]+>")
@@ -607,7 +609,11 @@ class _IndexSearch(Protocol):
 
 
 class PaperCard(TypedDict):
-    """Slim paper observation for the search ReAct trajectory."""
+    """Slim paper observation for the search ReAct trajectory.
+
+    Abstract is truncated to ``_RERANK_MAX_ABSTRACT_CHARS`` to keep the
+    trajectory within the LM context window.
+    """
 
     title: str
     abstract: str
@@ -639,6 +645,20 @@ class SessionLiteratureSearch:
         self._session = session
         self._literature_search = literature_search
 
+    def __deepcopy__(self, memo: dict[int, object]) -> SessionLiteratureSearch:
+        """Deep-copy with a fresh session and a shared index dispatcher.
+
+        The session is deep-copied so the copy writes to its own paper
+        bag. The ``LiteratureSearch`` dispatcher is reference-shared
+        because it is stateless and only holds per-call HTTP handles.
+        """
+        new = SessionLiteratureSearch(
+            copy.deepcopy(self._session, memo),
+            self._literature_search,
+        )
+        memo[id(self)] = new
+        return new
+
     async def __call__(
         self,
         search_index: SearchIndexType,
@@ -669,7 +689,11 @@ class SessionLiteratureSearch:
                 added.append(paper)
         self._session.set(SEARCH_RESULTS_KEY, bag)
         return [
-            PaperCard(title=paper.title, abstract=paper.abstract) for paper in added
+            PaperCard(
+                title=paper.title,
+                abstract=paper.abstract[:_RERANK_MAX_ABSTRACT_CHARS],
+            )
+            for paper in added
         ]
 
     @staticmethod

@@ -280,3 +280,32 @@ def test_main_preserves_existing_max_workers_env(
         main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
 
     assert os.environ["MLFLOW_GENAI_EVAL_MAX_WORKERS"] == "4"
+
+
+def test_main_disables_dspy_disk_cache(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    module = _rows_module("search-search", row_count=1, limit=1)
+
+    with (
+        patch("evals.main.dspy") as fake_dspy,
+        patch("evals.main.build_modules", return_value={"search-search": module}),
+        patch("evals.main.mlflow") as mlflow_mod,
+    ):
+        _mock_mlflow_evaluate(mlflow_mod)
+        main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
+
+    fake_dspy.configure_cache.assert_called_once_with(
+        enable_disk_cache=False,
+        enable_memory_cache=True,
+    )
+
+
+def test_main_list_does_not_disable_dspy_disk_cache(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("evals.main.dspy") as fake_dspy:
+        main(["--list"])
+
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out == sorted(MODULE_NAMES)
+    fake_dspy.configure_cache.assert_not_called()

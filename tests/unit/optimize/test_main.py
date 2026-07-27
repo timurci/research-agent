@@ -119,3 +119,79 @@ def test_main_auto_flag_selects_gepa_preset(tmp_path: Path) -> None:
         )
 
     assert gepa_cls.call_args.kwargs["auto"] == "heavy"
+
+
+def _module_with_pool_size(pool_size: int) -> OptimizeModule:
+    examples = [
+        dspy.Example(
+            research_query=ResearchQuery(text=f"query number {i}")
+        ).with_inputs("research_query")
+        for i in range(pool_size)
+    ]
+    return OptimizeModule(
+        name="search-search",
+        load_trainset=lambda: examples,
+        metric=MagicMock(name="metric"),
+        build_student=lambda: MagicMock(name="student"),
+        sample_limit=None,
+    )
+
+
+def test_main_applies_low_pool_split_when_pool_below_threshold(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(tmp_path)
+    module = _module_with_pool_size(50)
+    optimized = MagicMock()
+    optimized.detailed_results = None
+    gepa = MagicMock()
+    gepa.compile.return_value = optimized
+
+    with (
+        patch("optimize.main.build_modules", return_value={"search-search": module}),
+        patch("optimize.main.dspy.GEPA", return_value=gepa),
+    ):
+        main(
+            [
+                "search-search",
+                "--config",
+                str(config_path),
+                "--out-dir",
+                str(tmp_path),
+            ],
+        )
+
+    trainset = gepa.compile.call_args.kwargs["trainset"]
+    valset = gepa.compile.call_args.kwargs["valset"]
+    assert len(trainset) == 25
+    assert len(valset) == 25
+
+
+def test_main_applies_default_split_when_pool_at_or_above_threshold(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(tmp_path)
+    module = _module_with_pool_size(200)
+    optimized = MagicMock()
+    optimized.detailed_results = None
+    gepa = MagicMock()
+    gepa.compile.return_value = optimized
+
+    with (
+        patch("optimize.main.build_modules", return_value={"search-search": module}),
+        patch("optimize.main.dspy.GEPA", return_value=gepa),
+    ):
+        main(
+            [
+                "search-search",
+                "--config",
+                str(config_path),
+                "--out-dir",
+                str(tmp_path),
+            ],
+        )
+
+    trainset = gepa.compile.call_args.kwargs["trainset"]
+    valset = gepa.compile.call_args.kwargs["valset"]
+    assert len(trainset) == 160
+    assert len(valset) == 40

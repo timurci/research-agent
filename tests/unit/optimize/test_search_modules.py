@@ -5,12 +5,15 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from optimize.search.modules import (
+    LOW_POOL_SPLIT_THRESHOLD,
+    LOW_POOL_TRAIN_FRACTION,
     MODULE_NAMES,
     SEARCH_SAMPLE_LIMIT,
     SEARCH_TRAIN_FRACTION,
     build_modules,
     sample_examples,
     split_train_val,
+    train_fraction_for_pool_size,
 )
 from research_agent.shared.agent import LMConfig
 
@@ -40,7 +43,6 @@ def test_build_modules_names_and_factories() -> None:
         assert callable(module.metric)
         assert callable(module.build_student)
         assert module.sample_limit == SEARCH_SAMPLE_LIMIT
-        assert module.train_fraction == SEARCH_TRAIN_FRACTION
 
 
 def test_build_modules_binds_labeler_lm_config() -> None:
@@ -102,3 +104,29 @@ def test_split_train_val_single_example_duplicates() -> None:
     train, val = split_train_val([42], train_fraction=0.8, seed=0)
     assert train == [42]
     assert val == [42]
+
+
+def test_low_pool_split_constants() -> None:
+    assert LOW_POOL_TRAIN_FRACTION == 0.5
+    assert LOW_POOL_SPLIT_THRESHOLD == 200
+    assert SEARCH_TRAIN_FRACTION == 0.8
+
+
+def test_train_fraction_for_pool_size_below_threshold_returns_half() -> None:
+    for pool_size in [1, 50, 100, 199]:
+        assert train_fraction_for_pool_size(pool_size) == LOW_POOL_TRAIN_FRACTION
+
+
+def test_train_fraction_for_pool_size_at_threshold_returns_default() -> None:
+    assert (
+        train_fraction_for_pool_size(LOW_POOL_SPLIT_THRESHOLD) == SEARCH_TRAIN_FRACTION
+    )
+
+
+def test_train_fraction_for_pool_size_above_threshold_returns_default() -> None:
+    for pool_size in [201, 500, 1000]:
+        assert train_fraction_for_pool_size(pool_size) == SEARCH_TRAIN_FRACTION
+
+
+def test_train_fraction_for_pool_size_zero_returns_half() -> None:
+    assert train_fraction_for_pool_size(0) == LOW_POOL_TRAIN_FRACTION

@@ -11,8 +11,10 @@ a ``dspy.Module`` that owns ``self.react`` so GEPA can optimize its
 predictor instructions.
 
 Default data plan: sample ``SEARCH_SAMPLE_LIMIT`` examples from HF train,
-then an 80/20 split into GEPA train (reflection) and val (Pareto). The HF
-test split is reserved for evals and is never used here.
+then a train/val split whose fraction depends on the resulting pool size
+(``train_fraction_for_pool_size``): 50/50 below
+``LOW_POOL_SPLIT_THRESHOLD`` (200), 80/20 at or above. The HF test split
+is reserved for evals and is never used here.
 """
 
 from __future__ import annotations
@@ -37,6 +39,8 @@ MODULE_NAMES: frozenset[str] = frozenset({"search-search"})
 
 SEARCH_SAMPLE_LIMIT: int | None = 50
 SEARCH_TRAIN_FRACTION: float = 0.8
+LOW_POOL_TRAIN_FRACTION: float = 0.5
+LOW_POOL_SPLIT_THRESHOLD: int = 200
 _MIN_SPLIT_SIZE: int = 2
 
 
@@ -49,7 +53,6 @@ class OptimizeModule:
     metric: Callable[..., ScoreWithFeedback]
     build_student: Callable[[], dspy.Module]
     sample_limit: int | None = None
-    train_fraction: float = SEARCH_TRAIN_FRACTION
 
 
 def build_modules(
@@ -72,7 +75,6 @@ def build_modules(
             metric=search_query_metric(lm_config=labeler_lm_config),
             build_student=lambda: SearchProgram(lm_config=search_lm_config),
             sample_limit=SEARCH_SAMPLE_LIMIT,
-            train_fraction=SEARCH_TRAIN_FRACTION,
         ),
     }
 
@@ -100,6 +102,26 @@ def sample_examples(
         random.Random(seed).sample(range(len(examples)), k=limit),  # noqa: S311  # reproducible optimize subsampling, not security
     )
     return [examples[index] for index in indices]
+
+
+def train_fraction_for_pool_size(pool_size: int) -> float:
+    """Pick a train/val split fraction based on the sampled pool size.
+
+    Pools smaller than ``LOW_POOL_SPLIT_THRESHOLD`` use a 50/50 split so
+    GEPA's val (Pareto) set stays meaningful when total examples are
+    scarce. At or above the threshold, falls back to the default
+    ``SEARCH_TRAIN_FRACTION`` (80/20).
+
+    Args:
+        pool_size: Number of examples after ``sample_examples``.
+
+    Returns:
+        ``LOW_POOL_TRAIN_FRACTION`` when *pool_size* is below
+        ``LOW_POOL_SPLIT_THRESHOLD``; otherwise ``SEARCH_TRAIN_FRACTION``.
+    """
+    if pool_size < LOW_POOL_SPLIT_THRESHOLD:
+        return LOW_POOL_TRAIN_FRACTION
+    return SEARCH_TRAIN_FRACTION
 
 
 def split_train_val(

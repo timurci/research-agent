@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 _MAX_REACT_ITERS: int = 10
 _LITERATURE_SEARCH_TOOL_NAME: str = "LiteratureSearch"
+_RERANK_MAX_ABSTRACT_CHARS: int = 2048
 
 
 class _RelevanceScore(TypedDict):
@@ -144,7 +145,10 @@ class Reranker(Agent[tuple[ResearchQuery, list[PaperInfo]], list[PaperInfo]]):
         else:
             query_text = f"Query: {query.text}"
 
-        docs = [f"Title: {r.title}; Abstract: {r.abstract}" for r in results]
+        docs = [
+            f"Title: {r.title}; Abstract: {r.abstract[:_RERANK_MAX_ABSTRACT_CHARS]}"
+            for r in results
+        ]
         ranking = await litellm.arerank(
             model=self._model,
             api_key=self._api_key,

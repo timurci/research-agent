@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 from pydantic import HttpUrl
 
 from research_agent.search.models import PaperInfo, SearchIndexType
 from research_agent.search.tools import (
+    _RERANK_MAX_ABSTRACT_CHARS,
     SEARCH_RESULTS_KEY,
     LiteratureSearch,
     SessionLiteratureSearch,
@@ -122,6 +125,34 @@ async def test_none_value_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_card_abstract_truncated_but_bag_keeps_full_abstract() -> None:
+    long_abstract = "A" * 4000
+    paper = PaperInfo(
+        title="Alpha Paper On Quantum Computing Advances",
+        abstract=long_abstract,
+        authors=("Alice Smith",),
+        url=HttpUrl("https://example.com/paper"),
+        open_access=False,
+    )
+    session = InMemorySession()
+    tool = SessionLiteratureSearch(session, _FakeLiteratureSearch([[paper]]))
+
+    cards = await tool(SearchIndexType.OPENALEX, "q", limit=1)
+
+    assert cards == [
+        {
+            "title": paper.title,
+            "abstract": long_abstract[:_RERANK_MAX_ABSTRACT_CHARS],
+        }
+    ]
+    assert len(cards[0]["abstract"]) == _RERANK_MAX_ABSTRACT_CHARS
+    bag = SessionLiteratureSearch.papers(session)
+    assert len(bag) == 1
+    stored = next(iter(bag))
+    assert stored.abstract == long_abstract
+
+
+@pytest.mark.asyncio
 async def test_scoped_session_isolates_bags() -> None:
     paper_a = _make_paper("Alpha Paper On Quantum Computing Advances")
     paper_b = _make_paper("Beta Paper On Neural Network Optimization")
@@ -140,3 +171,34 @@ async def test_scoped_session_isolates_bags() -> None:
         await tool(SearchIndexType.PUBMED, "q2", limit=1)
         assert SessionLiteratureSearch.papers(fresh) == {paper_b}
     assert base.get(SEARCH_RESULTS_KEY) == {paper_a}
+
+
+def test_deepcopy_creates_independent_instance_with_shared_dispatcher() -> None:
+    session = InMemorySession()
+    inner = _FakeLiteratureSearch([])
+    tool = SessionLiteratureSearch(session, inner)
+
+    copy_tool = copy.deepcopy(tool)
+
+    assert copy_tool is not tool
+    assert copy_tool._session is not tool._session
+    assert copy_tool._literature_search is tool._literature_search
+
+
+@pytest.mark.asyncio
+async def test_deepcopy_isolates_bag() -> None:
+    paper_a = _make_paper("Alpha Paper On Quantum Computing Advances")
+    paper_b = _make_paper("Beta Paper On Neural Network Optimization")
+    session = InMemorySession()
+    inner = _FakeLiteratureSearch([[paper_a], [paper_b]])
+    tool = SessionLiteratureSearch(session, inner)
+
+    copy_tool = copy.deepcopy(tool)
+
+    await tool(SearchIndexType.CROSSREF, "q1", limit=1)
+    assert SessionLiteratureSearch.papers(session) == {paper_a}
+
+    copy_session = copy_tool._session
+    await copy_tool(SearchIndexType.PUBMED, "q2", limit=1)
+    assert SessionLiteratureSearch.papers(copy_session) == {paper_b}
+    assert SessionLiteratureSearch.papers(session) == {paper_a}

@@ -16,6 +16,7 @@ would not earn its keep.
 
 from __future__ import annotations
 
+import copy
 import threading
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Protocol
@@ -97,6 +98,20 @@ class ScopedSession(Session):
         """
         self._base = base
         self._local = threading.local()
+
+    def __deepcopy__(self, memo: dict[int, object]) -> ScopedSession:
+        """Deep-copy with a deep-copied base and a fresh thread-local slot.
+
+        The base session is deep-copied so the copy starts independent of
+        the original's state. The per-thread ``threading.local`` is
+        replaced with a fresh one because per-thread overrides are
+        meaningless across copies and ``threading.local`` itself cannot
+        be deep-copied.
+        """
+        new = ScopedSession(copy.deepcopy(self._base, memo))
+        memo[id(self)] = new
+        new.__dict__["_local"] = threading.local()
+        return new
 
     @property
     def _override(self) -> Session | None:

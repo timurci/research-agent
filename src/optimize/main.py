@@ -10,10 +10,10 @@ Optimizes one student step at a time (currently: search agent only).
 Does not optimize the reranker or the search→rerank e2e workflow.
 
 This pipeline loads the Hugging Face **train** split (evals keeps
-**test**), samples a pool, splits it 80/20 into GEPA train (reflection)
-and val (Pareto selection), builds GEPA metrics that adapt domain
-quality functions, and compiles the student program
-(``optimize.search.agents.SearchProgram``) with ``dspy.GEPA``.
+**test**), samples a pool, splits it into GEPA train (reflection) and
+val (Pareto selection) using a pool-size-aware fraction, builds GEPA
+metrics that adapt domain quality functions, and compiles the student
+program (``optimize.search.agents.SearchProgram``) with ``dspy.GEPA``.
 Live index calls (PubMed, CrossRef, OpenAlex) happen inside the search
 student during optimization. The ``search-rerank`` role is used only
 for relevance labeling in metrics; ``optimize-teacher`` is the GEPA
@@ -35,6 +35,7 @@ from optimize.search.modules import (
     build_modules,
     sample_examples,
     split_train_val,
+    train_fraction_for_pool_size,
 )
 from research_agent.shared.dspy import dspy_lm
 from research_agent.shared.lm_config import (
@@ -104,10 +105,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=None,
-        help=(
-            "Override per-module pool size before the train/val split "
-            "(default module pool: 50 → 40 train / 10 val at 80/20)."
-        ),
+        help=("Override per-module pool size before the train/val split."),
     )
     parser.add_argument(
         "--seed",
@@ -147,9 +145,10 @@ def _run_module(module: OptimizeModule, options: _RunOptions) -> None:
             options.seed,
         )
 
+    train_fraction = train_fraction_for_pool_size(len(pool))
     trainset, valset = split_train_val(
         pool,
-        train_fraction=module.train_fraction,
+        train_fraction=train_fraction,
         seed=options.seed,
     )
     logger.info(
@@ -158,7 +157,7 @@ def _run_module(module: OptimizeModule, options: _RunOptions) -> None:
         len(pool),
         len(trainset),
         len(valset),
-        module.train_fraction,
+        train_fraction,
         options.seed,
     )
 
@@ -166,6 +165,7 @@ def _run_module(module: OptimizeModule, options: _RunOptions) -> None:
     optimizer = dspy.GEPA(
         metric=module.metric,
         auto=options.auto,
+        add_format_failure_as_feedback=True,
         reflection_lm=options.teacher_lm,
         log_dir=str(options.out_dir / module.name),
         track_stats=True,

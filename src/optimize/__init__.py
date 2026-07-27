@@ -6,6 +6,10 @@ metrics that return continuous floats plus textual feedback for
 reflection. Metric definitions stay in the domain; adapters only coerce
 optimizer I/O.
 
-Capability suites live under subpackages (e.g. ``optimize.search``).
+The entrypoint is ``optimize.main``. It parses CLI arguments, loads LM
+configs, builds the registered modules, and runs each module through the
+GEPA compile loop. Module factories live in subpackages such as
+``optimize.search``; the top-level package only orchestrates.
+
 ``research_agent`` never imports from this package.
 """

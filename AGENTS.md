@@ -4,7 +4,7 @@ Operating manual for AI coding agents. Exact commands and file-level rules; arch
 
 ## Project overview
 
-A research assistant for scientific literature discovery. The current capability is the **search slice**: `ResearchQuery` → `list[PaperInfo]` via LLM-backed `Agent` ports (search + rerank), composed by `PaperSearchWorkflow`. Sibling packages `src/datagen`, `src/optimize`, and `src/evals` are tooling only — never imported by the runtime.
+A research assistant for scientific literature discovery. The current capability is the **search slice**: `ResearchQuery` → `tuple[list[PaperInfo], str]` via LLM-backed `Agent` ports (search + rerank + suggest), composed by `PaperSearchWorkflow`. Sibling packages `src/datagen`, `src/optimize`, and `src/evals` are tooling only — never imported by the runtime.
 
 ## Tech stack
 
@@ -80,7 +80,7 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 - **Ubiquitous language.** Names say what the object is; no empty `Request`/`Result` wrappers around existing models.
 - **Pydantic invariants at construction.** Domain objects are never patched into validity after create.
-- **Workflow output is bare `list[PaperInfo]`.** No search-index provenance on results; `SearchIndex` is a tool-dispatch key only.
+- **Workflow output is `tuple[list[PaperInfo], str]`.** Papers are the reranked search results; the string is a free-text suggestion for manual research. No search-index provenance on results; `SearchIndex` is a tool-dispatch key only.
 - **Metrics live in the domain** as pure functions; `optimize` and `evals` consume them and must not reimplement “good.”
 - **No code comments** (inline/trailing). Google docstrings required (`ruff`).
 - **Local docstrings only.** Each docstring documents only what is local to the object. The definition is the single source of truth for what something *is* and does internally; the call site documents how it *composes* or *uses* it, and only when extra context is needed there. Do not restate an object's behavior, lifecycle, or invariants at a second site. Example: `SearchAgent` is defined in `src/research_agent/search/agents.py`; how a workflow or eval suite wires it belongs in that workflow/eval file, not duplicated on `SearchAgent` or in its module docstring.
@@ -94,8 +94,8 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 - `src/datagen` — synthetic queries → `data/datagen/output/queries_train.jsonl` via `uv run generate-queries`.
 - `src/optimize` — DSPy GEPA optimization harness, currently optimizes the **search agent only** (not reranker, not e2e).
-- `src/evals` — MLflow scorer adapters + eval agent factories; run suites with `uv run -m evals.main --list` / `uv run -m evals.main --experiment NAME search-e2e search-search`.
-- LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.config.lm` (Infrastructure). Roles `search-search` and `search-rerank` are `LMConfig` field maps.
+- `src/evals` — MLflow scorer adapters + eval agent factories; run suites with `uv run -m evals.main --list` / `uv run -m evals.main --experiment NAME search-search`.
+- LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.config.lm` (Infrastructure). Roles `search-search`, `search-rerank`, and `search-suggest` are `LMConfig` field maps.
 - Optimized instructions: copy `config/instructions.example.yaml` → `config/instructions.yaml` (gitignored). Loader is `research_agent.shared.config.instructions` (Infrastructure). Maps module names (e.g. `search-search`) to saved DSPy program paths.
 - Do not commit under `data/**/output/` except `.gitkeep`.
 

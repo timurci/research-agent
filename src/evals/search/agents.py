@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING
 
 from research_agent.search.agents import Reranker, SearchAgent
 from research_agent.search.tools import LiteratureSearch
-from research_agent.search.workflows import PaperSearchWorkflow
 from research_agent.shared.config.lm import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
 from research_agent.shared.config.lm import lm_config as load_lm_config
 from research_agent.shared.session import InMemorySession
@@ -54,9 +53,7 @@ def search_agent(
             optimized instructions are loaded onto each fresh search agent.
 
     Parameter name on the returned callable is ``data`` to match the
-    ``Agent`` protocol. Prefer ``paper_search_workflow()`` as the MLflow
-    ``predict_fn`` — eval rows use the ``query`` key, which matches the
-    workflow's ``__call__``.
+    ``Agent`` protocol.
     """
     config = lm_config if lm_config is not None else load_lm_config(ROLE_SEARCH_SEARCH)
     literature_search = LiteratureSearch()
@@ -74,7 +71,7 @@ def search_agent(
 
 
 def reranker(*, lm_config: LMConfig | None = None) -> Reranker:
-    """Reranker for relevance scoring and the search workflow.
+    """Reranker for relevance scoring.
 
     Args:
         lm_config: Reranker LM settings. Defaults to the
@@ -82,28 +79,3 @@ def reranker(*, lm_config: LMConfig | None = None) -> Reranker:
     """
     config = lm_config if lm_config is not None else load_lm_config(ROLE_SEARCH_RERANK)
     return Reranker(config)
-
-
-def paper_search_workflow(
-    *,
-    search_lm_config: LMConfig | None = None,
-    rerank_lm_config: LMConfig | None = None,
-    search_instructions_path: Path | None = None,
-) -> PaperSearchWorkflow:
-    """Search → rerank workflow for ``predict_fn`` (query-only evalset).
-
-    Use this as MLflow ``predict_fn``: eval inputs are
-    ``{"query": ResearchQuery}``, matching ``PaperSearchWorkflow.__call__``.
-
-    Args:
-        search_lm_config: Forwarded to ``search_agent``.
-        rerank_lm_config: Forwarded to ``reranker``.
-        search_instructions_path: Forwarded to ``search_agent``.
-    """
-    return PaperSearchWorkflow(
-        search_agent(
-            lm_config=search_lm_config,
-            instructions_path=search_instructions_path,
-        ),
-        reranker(lm_config=rerank_lm_config),
-    )

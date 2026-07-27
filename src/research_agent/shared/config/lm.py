@@ -9,6 +9,7 @@ Application LM roles for the search slice:
 
 * ``search-search`` — search agent
 * ``search-rerank`` — reranker / relevance labeler
+* ``search-suggest`` — suggestion generator for manual research direction
 
 Tooling roles (not runtime):
 
@@ -28,6 +29,7 @@ DEFAULT_LM_CONFIG_PATH = Path("config/lm.yaml")
 
 ROLE_SEARCH_SEARCH = "search-search"
 ROLE_SEARCH_RERANK = "search-rerank"
+ROLE_SEARCH_SUGGEST = "search-suggest"
 ROLE_OPTIMIZE_TEACHER = "optimize-teacher"
 
 

@@ -11,7 +11,6 @@ from pydantic import HttpUrl
 from evals.search.agents import search_agent
 from evals.search.modules import (
     MODULE_NAMES,
-    SEARCH_E2E_SAMPLE_LIMIT,
     SEARCH_SAMPLE_LIMIT,
     as_query_predict_fn,
     build_modules,
@@ -32,7 +31,7 @@ _RERANK = LMConfig(model="infinity/test-rerank")
 
 
 def test_module_names() -> None:
-    assert frozenset({"search-search", "search-e2e"}) == MODULE_NAMES
+    assert frozenset({"search-search"}) == MODULE_NAMES
 
 
 def test_build_modules_names_and_factories() -> None:
@@ -54,7 +53,6 @@ def test_build_modules_sets_sample_limits() -> None:
         rerank_lm_config=_RERANK,
     )
     assert modules["search-search"].sample_limit == SEARCH_SAMPLE_LIMIT
-    assert modules["search-e2e"].sample_limit == SEARCH_E2E_SAMPLE_LIMIT
 
 
 def test_build_modules_injects_lm_configs() -> None:
@@ -64,30 +62,19 @@ def test_build_modules_injects_lm_configs() -> None:
     )
     with (
         patch("evals.search.modules.search_agent") as search_factory,
-        patch("evals.search.modules.paper_search_workflow") as workflow_factory,
         patch("evals.search.modules.search_query_scorers") as scorers_factory,
     ):
         search_factory.return_value = object()
-        workflow_factory.return_value = object()
         scorers_factory.return_value = ()
 
         modules["search-search"].build_predict_fn()
         modules["search-search"].build_scorers()
-        modules["search-e2e"].build_predict_fn()
-        modules["search-e2e"].build_scorers()
 
     search_factory.assert_called_once_with(
         lm_config=_SEARCH,
         instructions_path=None,
     )
-    workflow_factory.assert_called_once_with(
-        search_lm_config=_SEARCH,
-        rerank_lm_config=_RERANK,
-        search_instructions_path=None,
-    )
-    assert scorers_factory.call_count == 2
-    for call in scorers_factory.call_args_list:
-        assert call.kwargs == {"lm_config": _RERANK}
+    scorers_factory.assert_called_once_with(lm_config=_RERANK)
 
 
 def test_build_modules_forwards_search_instructions() -> None:
@@ -99,25 +86,19 @@ def test_build_modules_forwards_search_instructions() -> None:
     )
     with (
         patch("evals.search.modules.search_agent") as search_factory,
-        patch("evals.search.modules.paper_search_workflow") as workflow_factory,
         patch("evals.search.modules.search_query_scorers") as scorers_factory,
     ):
         search_factory.return_value = object()
-        workflow_factory.return_value = object()
         scorers_factory.return_value = ()
 
         modules["search-search"].build_predict_fn()
-        modules["search-e2e"].build_predict_fn()
+        modules["search-search"].build_scorers()
 
     search_factory.assert_called_once_with(
         lm_config=_SEARCH,
         instructions_path=instructions["search-search"],
     )
-    workflow_factory.assert_called_once_with(
-        search_lm_config=_SEARCH,
-        rerank_lm_config=_RERANK,
-        search_instructions_path=instructions["search-search"],
-    )
+    scorers_factory.assert_called_once_with(lm_config=_RERANK)
 
 
 def test_query_module_binds_name() -> None:

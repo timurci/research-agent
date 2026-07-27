@@ -48,15 +48,14 @@ def _mock_mlflow_evaluate(mlflow_mod: MagicMock) -> None:
     mlflow_mod.genai.evaluate.return_value = MagicMock(passed=True, reason="ok")
 
 
-def test_module_names_has_search_suites() -> None:
-    assert frozenset({"search-search", "search-e2e"}) == MODULE_NAMES
+def test_module_names_has_search_suite() -> None:
+    assert frozenset({"search-search"}) == MODULE_NAMES
 
 
 def test_parser_accepts_modules_and_options() -> None:
     parser = _build_parser()
     args = parser.parse_args(
         [
-            "search-e2e",
             "search-search",
             "--experiment",
             "my-exp",
@@ -68,7 +67,7 @@ def test_parser_accepts_modules_and_options() -> None:
             "config/custom-instructions.yaml",
         ],
     )
-    assert args.modules == ["search-e2e", "search-search"]
+    assert args.modules == ["search-search"]
     assert args.experiment == "my-exp"
     assert args.tracking_uri == "./mlruns"
     assert args.config.as_posix() == "config/custom-lm.yaml"
@@ -131,7 +130,7 @@ def test_main_requires_module_without_list() -> None:
 
 def test_main_requires_experiment_without_list() -> None:
     with pytest.raises(SystemExit):
-        main(["search-e2e"])
+        main(["search-search"])
 
 
 def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> None:

@@ -32,7 +32,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from research_agent.search.models import PaperInfo, ResearchQuery
-    from research_agent.shared.agent import Agent, LMConfig
+    from research_agent.shared.agent import Agent
+    from research_agent.shared.config.models import LMConfig
 
 
 def search_agent(

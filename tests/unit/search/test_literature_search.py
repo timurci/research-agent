@@ -17,7 +17,7 @@ from Bio import Entrez
 from habanero import Crossref
 
 from research_agent.search import tools as tools_mod
-from research_agent.search.models import SearchIndexType
+from research_agent.search.models import SearchIndex
 from research_agent.search.tools import LiteratureSearch
 
 _ABSTRACT = (
@@ -148,17 +148,17 @@ def _make_openalex_work(  # noqa: PLR0913  # test helper mirroring OpenAlex work
 def test_init_wires_three_handlers() -> None:
     tool = LiteratureSearch()
 
-    pubmed = tool._handlers[SearchIndexType.PUBMED]
-    crossref = tool._handlers[SearchIndexType.CROSSREF]
-    openalex = tool._handlers[SearchIndexType.OPENALEX]
+    pubmed = tool._handlers[SearchIndex.PUBMED]
+    crossref = tool._handlers[SearchIndex.CROSSREF]
+    openalex = tool._handlers[SearchIndex.OPENALEX]
 
     assert pubmed is not None
     assert crossref is not None
     assert openalex is not None
     assert set(tool._handlers) == {
-        SearchIndexType.PUBMED,
-        SearchIndexType.CROSSREF,
-        SearchIndexType.OPENALEX,
+        SearchIndex.PUBMED,
+        SearchIndex.CROSSREF,
+        SearchIndex.OPENALEX,
     }
 
 
@@ -218,7 +218,7 @@ async def test_pubmed_handles_abstract_list(
     _stub_pubmed(monkeypatch, [article])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "q", limit=5)
+    out = await tool(SearchIndex.PUBMED, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].abstract == (
@@ -243,7 +243,7 @@ async def test_pubmed_handles_collective_name(
     )
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "q", limit=5)
+    out = await tool(SearchIndex.PUBMED, "q", limit=5)
 
     assert len(out) == 1
     assert list(out[0].authors) == ["The Cancer Genome Atlas Network"]
@@ -256,7 +256,7 @@ async def test_pubmed_handles_missing_year(
     _stub_pubmed(monkeypatch, [_make_pubmed_article(year="")])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "q", limit=5)
+    out = await tool(SearchIndex.PUBMED, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].publication_year is None
@@ -276,7 +276,7 @@ async def test_pubmed_handles_non_list_abstract(
     _stub_pubmed(monkeypatch, [article])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "q", limit=5)
+    out = await tool(SearchIndex.PUBMED, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].abstract.startswith("A single string abstract that introduces")
@@ -291,7 +291,7 @@ async def test_pubmed_coerces_empty_doi_to_none(
     _stub_pubmed(monkeypatch, [article])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "q", limit=5)
+    out = await tool(SearchIndex.PUBMED, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].doi is None
@@ -304,7 +304,7 @@ async def test_pubmed_handles_empty_id_list(
     _stub_pubmed_empty(monkeypatch)
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "nothing", limit=5)
+    out = await tool(SearchIndex.PUBMED, "nothing", limit=5)
 
     assert out == []
 
@@ -333,7 +333,7 @@ async def test_pubmed_drops_records_missing_title_or_abstract(
     _stub_pubmed(monkeypatch, [bad_article, good])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "cancer", limit=5)
+    out = await tool(SearchIndex.PUBMED, "cancer", limit=5)
 
     assert len(out) == 1
 
@@ -349,7 +349,7 @@ async def test_pubmed_drops_records_failing_paper_info_constraints(
     _stub_pubmed(monkeypatch, [short_abstract, short_title, no_authors, good])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "cancer", limit=10)
+    out = await tool(SearchIndex.PUBMED, "cancer", limit=10)
 
     assert len(out) == 1
 
@@ -361,7 +361,7 @@ async def test_pubmed_all_invalid_returns_empty(
     _stub_pubmed(monkeypatch, [_make_pubmed_article(abstract=_SHORT_ABSTRACT)])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.PUBMED, "cancer", limit=5)
+    out = await tool(SearchIndex.PUBMED, "cancer", limit=5)
 
     assert out == []
 
@@ -392,7 +392,7 @@ async def test_crossref_strips_jats_from_abstract(
     _stub_crossref(monkeypatch, [item])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndex.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].abstract == (
@@ -413,7 +413,7 @@ async def test_crossref_falls_back_on_published_online(
     _stub_crossref(monkeypatch, [item])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndex.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].publication_year == 2022
@@ -429,7 +429,7 @@ async def test_crossref_falls_back_on_issued(
     _stub_crossref(monkeypatch, [item])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndex.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].publication_year == 2019
@@ -444,7 +444,7 @@ async def test_crossref_falls_back_url_to_doi_org(
     _stub_crossref(monkeypatch, [item])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndex.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
     assert str(out[0].url) == f"https://doi.org/{_DOI}"
@@ -461,7 +461,7 @@ async def test_crossref_drops_records_with_no_url_or_doi(
     _stub_crossref(monkeypatch, [bad, good])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndex.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
 
@@ -476,7 +476,7 @@ async def test_crossref_all_invalid_returns_empty(
     _stub_crossref(monkeypatch, [item])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndex.CROSSREF, "q", limit=5)
 
     assert out == []
 
@@ -488,7 +488,7 @@ async def test_crossref_coerces_empty_doi_to_none(
     _stub_crossref(monkeypatch, [_make_crossref_item(doi="")])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndex.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].doi is None
@@ -505,7 +505,7 @@ async def test_crossref_raises_on_unexpected_response_type(
 
     tool = LiteratureSearch()
     with pytest.raises(TypeError, match="CrossRef returned unexpected type"):
-        await tool(SearchIndexType.CROSSREF, "q", limit=5)
+        await tool(SearchIndex.CROSSREF, "q", limit=5)
 
 
 @pytest.mark.asyncio
@@ -519,7 +519,7 @@ async def test_crossref_drops_records_missing_title_or_abstract(
     _stub_crossref(monkeypatch, [bad_item, good])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.CROSSREF, "q", limit=5)
+    out = await tool(SearchIndex.CROSSREF, "q", limit=5)
 
     assert len(out) == 1
 
@@ -553,7 +553,7 @@ async def test_openalex_reconstructs_inverted_abstract(
     _stub_openalex(monkeypatch, [work])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].abstract == _ABSTRACT
@@ -574,7 +574,7 @@ async def test_openalex_url_falls_back_to_doi(
     _stub_openalex(monkeypatch, [work])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
     assert str(out[0].url) == f"https://doi.org/{_OPENALEX_DOI_BARE}"
@@ -590,7 +590,7 @@ async def test_openalex_url_falls_back_to_openalex_id(
     _stub_openalex(monkeypatch, [work])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
     assert str(out[0].url) == _OPENALEX_ID
@@ -608,7 +608,7 @@ async def test_openalex_drops_records_with_no_url(
     _stub_openalex(monkeypatch, [bad, good])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
 
@@ -626,7 +626,7 @@ async def test_openalex_open_access_only_with_pdf(
     _stub_openalex(monkeypatch, [with_pdf, without_pdf])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "q", limit=5)
 
     assert len(out) == 2
     assert out[0].open_access is True
@@ -647,7 +647,7 @@ async def test_openalex_drops_incomplete_records(
     _stub_openalex(monkeypatch, [no_title, no_abstract, no_authors, good])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
 
@@ -659,7 +659,7 @@ async def test_openalex_empty_results(
     _stub_openalex(monkeypatch, [])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.OPENALEX, "nothing", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "nothing", limit=5)
 
     assert out == []
 
@@ -672,7 +672,7 @@ async def test_openalex_clamps_limit_and_forwards_api_key(
     _stub_openalex(monkeypatch, [_make_openalex_work()], capture=capture)
 
     tool = LiteratureSearch(openalex_api_key="test-key")
-    await tool(SearchIndexType.OPENALEX, "crispr", limit=500)
+    await tool(SearchIndex.OPENALEX, "crispr", limit=500)
 
     assert capture["query"] == "crispr"
     assert capture["per_page"] == 100
@@ -687,7 +687,7 @@ async def test_openalex_omits_api_key_when_none(
     _stub_openalex(monkeypatch, [_make_openalex_work()], capture=capture)
 
     tool = LiteratureSearch()
-    await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    await tool(SearchIndex.OPENALEX, "q", limit=5)
 
     assert capture["api_key"] is None
 
@@ -707,7 +707,7 @@ async def test_openalex_raises_on_unexpected_payload_type(
 
     tool = LiteratureSearch()
     with pytest.raises(TypeError, match="OpenAlex returned unexpected type"):
-        await tool(SearchIndexType.OPENALEX, "q", limit=5)
+        await tool(SearchIndex.OPENALEX, "q", limit=5)
 
 
 @pytest.mark.asyncio
@@ -720,7 +720,7 @@ async def test_openalex_pdf_from_locations(
     _stub_openalex(monkeypatch, [work])
 
     tool = LiteratureSearch()
-    out = await tool(SearchIndexType.OPENALEX, "q", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "q", limit=5)
 
     assert len(out) == 1
     assert out[0].open_access is True
@@ -773,11 +773,11 @@ async def test_openalex_fetch_builds_query_and_raises_on_http_error(
     monkeypatch.setattr(tools_mod.httpx, "AsyncClient", _FakeClient)
 
     tool = LiteratureSearch(openalex_api_key="secret")
-    out = await tool(SearchIndexType.OPENALEX, "crispr", limit=5)
+    out = await tool(SearchIndex.OPENALEX, "crispr", limit=5)
     assert len(out) == 1
     assert "api_key=secret" in seen["url"]
     assert "search=crispr" in seen["url"]
     assert "has_abstract" in seen["url"]
 
     with pytest.raises(httpx.HTTPStatusError):
-        await tool(SearchIndexType.OPENALEX, "fail", limit=5)
+        await tool(SearchIndex.OPENALEX, "fail", limit=5)

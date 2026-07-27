@@ -6,11 +6,12 @@ The search agent uses ReAct with a session-backed literature tool. Tool
 calls union full ``PaperInfo`` records into session ``search_results``
 (a ``set[PaperInfo]`` when present; missing key means empty) and return
 slim title/abstract cards for new hits. After the tool loop, the LM reports
-a ``SearchStatus``; the agent returns the index search results as a list.
+a ``SearchOutcome``; the agent returns the index search results as a list.
 """
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING, TypedDict
 
 import dspy
@@ -22,12 +23,12 @@ from research_agent.search.tools import (
 )
 from research_agent.shared.agent import Agent
 
-from .models import PaperInfo, ResearchQuery, SearchStatus
+from .models import PaperInfo, ResearchQuery
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from research_agent.shared.agent import LMConfig
+    from research_agent.shared.config.models import LMConfig
     from research_agent.shared.session import Session
 
 _MAX_REACT_ITERS: int = 10
@@ -40,6 +41,26 @@ class _RelevanceScore(TypedDict):
     relevance_score: float
 
 
+class SearchOutcome(StrEnum):
+    """Terminal status of a literature search ReAct episode.
+
+    Reported by the search agent after tool use; not used to filter the
+    session paper bag. Values:
+
+    * ``complete`` — enough useful papers gathered.
+    * ``insufficient_search`` — stopped early or under-explored.
+    * ``irrelevant_results`` — hits found but do not answer the query.
+    * ``missing_results`` — little or no hits despite reasonable queries.
+    * ``tool_error`` — tool or API failures dominated the trajectory.
+    """
+
+    COMPLETE = "complete"
+    INSUFFICIENT_SEARCH = "insufficient_search"
+    IRRELEVANT_RESULTS = "irrelevant_results"
+    MISSING_RESULTS = "missing_results"
+    TOOL_ERROR = "tool_error"
+
+
 class SearchAgentSignature(dspy.Signature):
     """Search literature for a research query.
 
@@ -49,7 +70,7 @@ class SearchAgentSignature(dspy.Signature):
     """
 
     research_query: ResearchQuery = dspy.InputField()
-    status: SearchStatus = dspy.OutputField(
+    status: SearchOutcome = dspy.OutputField(
         desc=("Final search outcome"),
     )
 
@@ -92,9 +113,9 @@ class _SearchProgram(dspy.Module):
         super().__init__()
         self.react = build_search_react(session_search)
 
-    async def aforward(self, research_query: ResearchQuery) -> SearchStatus:
+    async def aforward(self, research_query: ResearchQuery) -> SearchOutcome:
         prediction = await self.react.aforward(research_query=research_query)
-        return SearchStatus(prediction.status)
+        return SearchOutcome(prediction.status)
 
 
 class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):

@@ -13,7 +13,7 @@ from pydantic import HttpUrl
 from optimize.search.agents import SearchProgram, relevance_labeler, search_agent
 from research_agent.search.agents import Reranker
 from research_agent.search.models import ResearchQuery
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.config.models import LMConfig
 
 _LOAD_LM_CONFIG = "optimize.search.agents.load_lm_config"
 

@@ -6,7 +6,8 @@ import copy
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from research_agent.shared.session import InMemorySession, ScopedSession
+from research_agent.shared.scoped_session import ScopedSession
+from research_agent.shared.session import InMemorySession
 
 
 def test_set_get_round_trip() -> None:

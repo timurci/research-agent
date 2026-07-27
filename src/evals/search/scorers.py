@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from mlflow.entities import Feedback
     from mlflow.genai.scorers import Scorer
 
-    from research_agent.shared.agent import LMConfig
+    from research_agent.shared.config.models import LMConfig
 
 SEARCH_METRICS_SOURCE = code_assessment_source("research_agent.search.metrics")
 

@@ -15,7 +15,7 @@ from research_agent.search.agents import (
     build_search_react,
 )
 from research_agent.search.tools import LiteratureSearch, SessionLiteratureSearch
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.config.models import LMConfig
 from research_agent.shared.session import InMemorySession
 
 if TYPE_CHECKING:

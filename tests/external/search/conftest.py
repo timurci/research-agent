@@ -13,7 +13,7 @@ from research_agent.shared.config.lm import (
 )
 
 if TYPE_CHECKING:
-    from research_agent.shared.agent import LMConfig
+    from research_agent.shared.config.models import LMConfig
 
 
 @pytest.fixture

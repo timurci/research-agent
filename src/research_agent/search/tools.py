@@ -26,7 +26,7 @@ from pydantic import BaseModel, HttpUrl, ValidationError
 from research_agent.search.models import (
     MissingOpenAccessPDFError,
     PaperInfo,
-    SearchIndexType,
+    SearchIndex,
 )
 from research_agent.shared.executor import run_async
 
@@ -556,15 +556,15 @@ class LiteratureSearch:
                 private OpenAlex handler.  Injected by the caller; never
                 loaded from the environment inside this class.
         """
-        self._handlers: dict[SearchIndexType, _IndexSearch] = {
-            SearchIndexType.PUBMED: _PubMedSearch(api_key=pubmed_api_key),
-            SearchIndexType.CROSSREF: _CrossRefSearch(),
-            SearchIndexType.OPENALEX: _OpenAlexSearch(api_key=openalex_api_key),
+        self._handlers: dict[SearchIndex, _IndexSearch] = {
+            SearchIndex.PUBMED: _PubMedSearch(api_key=pubmed_api_key),
+            SearchIndex.CROSSREF: _CrossRefSearch(),
+            SearchIndex.OPENALEX: _OpenAlexSearch(api_key=openalex_api_key),
         }
 
     async def __call__(
         self,
-        search_index: SearchIndexType,
+        search_index: SearchIndex,
         query: str,
         *,
         limit: int,
@@ -573,7 +573,7 @@ class LiteratureSearch:
 
         Args:
             search_index: Which index to query.  One of the
-                ``SearchIndexType`` enum values (PubMed, CrossRef,
+                ``SearchIndex`` enum values (PubMed, CrossRef,
                 OpenAlex).
             query: Plain-text search query.  Query syntax is delegated to
                 the chosen index's handler.
@@ -588,7 +588,7 @@ class LiteratureSearch:
 
         Raises:
             UnknownIndexError: If *search_index* is not a recognised
-                ``SearchIndexType`` value.
+                ``SearchIndex`` value.
         """
         handler = self._handlers.get(search_index)
         if handler is None:
@@ -661,7 +661,7 @@ class SessionLiteratureSearch:
 
     async def __call__(
         self,
-        search_index: SearchIndexType,
+        search_index: SearchIndex,
         query: str,
         *,
         limit: int,
@@ -670,7 +670,7 @@ class SessionLiteratureSearch:
 
         Args:
             search_index: Which index to query.  One of the
-                ``SearchIndexType`` enum values (PubMed, CrossRef,
+                ``SearchIndex`` enum values (PubMed, CrossRef,
                 OpenAlex).
             query: Plain-text search query.  Query syntax is delegated to
                 the chosen index's handler.

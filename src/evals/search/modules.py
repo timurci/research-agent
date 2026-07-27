@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from mlflow.genai.scorers import Scorer
 
-    from research_agent.shared.agent import LMConfig
+    from research_agent.shared.config.models import LMConfig
 
 MODULE_NAMES: frozenset[str] = frozenset({"search-search", "search-e2e"})
 

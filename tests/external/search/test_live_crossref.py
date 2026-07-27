@@ -11,7 +11,7 @@ import asyncio
 
 import pytest
 
-from research_agent.search.models import SearchIndexType
+from research_agent.search.models import SearchIndex
 from research_agent.search.tools import LiteratureSearch
 
 _TIMEOUT_SECONDS: float = 30.0
@@ -24,7 +24,7 @@ async def test_search_finds_results() -> None:
     tool = LiteratureSearch()
 
     results = await asyncio.wait_for(
-        tool(SearchIndexType.CROSSREF, "deep learning neural networks", limit=5),
+        tool(SearchIndex.CROSSREF, "deep learning neural networks", limit=5),
         timeout=_TIMEOUT_SECONDS,
     )
 

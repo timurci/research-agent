@@ -1,11 +1,11 @@
-"""Unit tests for ``research_agent.shared.agent``."""
+"""Unit tests for ``research_agent.shared.config.models``."""
 
 from __future__ import annotations
 
 import pytest
 from pydantic import HttpUrl, ValidationError
 
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.config.models import LMConfig
 
 
 def test_lm_config_requires_model() -> None:

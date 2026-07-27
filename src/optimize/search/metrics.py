@@ -32,7 +32,7 @@ from research_agent.search.models import PaperInfo, ResearchQuery
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping, Sequence
 
-    from research_agent.shared.agent import LMConfig
+    from research_agent.shared.config.models import LMConfig
 
 __all__ = ["MetricShapeError", "search_query_metric"]
 

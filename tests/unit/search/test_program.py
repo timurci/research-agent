@@ -10,18 +10,18 @@ import dspy
 from pydantic import HttpUrl
 
 from optimize.search.agents import SearchProgram
+from research_agent.search.agents import SearchOutcome
 from research_agent.search.models import (
     PaperInfo,
     ResearchQuery,
-    SearchIndexType,
-    SearchStatus,
+    SearchIndex,
 )
 from research_agent.search.tools import (
     LiteratureSearch,
     SessionLiteratureSearch,
     load_search_results,
 )
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.config.models import LMConfig
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -49,11 +49,11 @@ def _make_paper(title: str = "Alpha Paper On Quantum Computing Advances") -> Pap
 class _FakeLiteratureSearch(LiteratureSearch):
     def __init__(self, papers: Sequence[PaperInfo]) -> None:
         self._papers = list(papers)
-        self.calls: list[tuple[SearchIndexType, str, int]] = []
+        self.calls: list[tuple[SearchIndex, str, int]] = []
 
     async def __call__(
         self,
-        search_index: SearchIndexType,
+        search_index: SearchIndex,
         query: str,
         *,
         limit: int,
@@ -90,7 +90,7 @@ def test_forward_returns_react_pred_with_isolated_bag() -> None:
         bag.add(paper_b)
         pred = dspy.Prediction(
             trajectory=trajectory,
-            status=SearchStatus.COMPLETE,
+            status=SearchOutcome.COMPLETE,
         )
         react_preds.append(pred)
         return pred
@@ -102,7 +102,7 @@ def test_forward_returns_react_pred_with_isolated_bag() -> None:
     assert result is react_preds[0]
     assert result.trajectory == trajectory
     assert set(result.search_results) == {paper_a, paper_b}
-    assert result.status == SearchStatus.COMPLETE
+    assert result.status == SearchOutcome.COMPLETE
 
 
 def test_forward_empty_bag_returns_empty_results() -> None:
@@ -112,7 +112,7 @@ def test_forward_empty_bag_returns_empty_results() -> None:
         del research_query
         return dspy.Prediction(
             trajectory={},
-            status=SearchStatus.MISSING_RESULTS,
+            status=SearchOutcome.MISSING_RESULTS,
         )
 
     program.react = MagicMock(side_effect=_fake_react)
@@ -120,7 +120,7 @@ def test_forward_empty_bag_returns_empty_results() -> None:
     result = program(research_query=_QUERY)
 
     assert result.search_results == []
-    assert result.status == SearchStatus.MISSING_RESULTS
+    assert result.status == SearchOutcome.MISSING_RESULTS
     assert result.trajectory == {}
 
 
@@ -138,7 +138,7 @@ def test_forward_isolates_bags_across_sequential_calls() -> None:
         assert bag == set()
         bag.update(bags[call_index])
         call_index += 1
-        return dspy.Prediction(status=SearchStatus.COMPLETE)
+        return dspy.Prediction(status=SearchOutcome.COMPLETE)
 
     program.react = MagicMock(side_effect=_fake_react)
 
@@ -166,7 +166,7 @@ def test_forward_isolates_bags_across_threads() -> None:
         else:
             msg = f"unexpected query {research_query!r}"
             raise AssertionError(msg)
-        return dspy.Prediction(status=SearchStatus.COMPLETE)
+        return dspy.Prediction(status=SearchOutcome.COMPLETE)
 
     program.react = MagicMock(side_effect=_fake_react)
 

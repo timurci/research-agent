@@ -15,7 +15,7 @@ from optimize.search.modules import (
     split_train_val,
     train_fraction_for_pool_size,
 )
-from research_agent.shared.agent import LMConfig
+from research_agent.shared.config.models import LMConfig
 
 _SEARCH = LMConfig(model="openai/test-search")
 _RERANK = LMConfig(model="infinity/test-rerank")

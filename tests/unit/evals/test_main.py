@@ -11,11 +11,11 @@ import pytest
 
 from evals.harness import EVAL_SEED, EvalModule, sample_rows
 from evals.main import MODULE_NAMES, _build_parser, main
-from research_agent.shared.agent import LMConfig
 from research_agent.shared.config.instructions import (
     DEFAULT_INSTRUCTIONS_CONFIG_PATH,
     file_sha256,
 )
+from research_agent.shared.config.models import LMConfig
 
 _CONFIG_YAML = """
 search-search:
@@ -213,6 +213,7 @@ def test_main_subsamples_rows_over_module_limit(
     with (
         patch("evals.main.build_modules", return_value={"search-search": module}),
         patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.load_instructions_config", return_value={}),
         caplog.at_level(logging.INFO, logger="evals.main"),
     ):
         _mock_mlflow_evaluate(mlflow_mod)
@@ -241,6 +242,7 @@ def test_main_limit_flag_overrides_module_sample_limit(tmp_path: Path) -> None:
     with (
         patch("evals.main.build_modules", return_value={"search-search": module}),
         patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.load_instructions_config", return_value={}),
     ):
         _mock_mlflow_evaluate(mlflow_mod)
         main(
@@ -275,6 +277,7 @@ def test_main_seed_flag_flows_to_sampling(tmp_path: Path) -> None:
     with (
         patch("evals.main.build_modules", return_value={"search-search": module}),
         patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.load_instructions_config", return_value={}),
     ):
         _mock_mlflow_evaluate(mlflow_mod)
         main(
@@ -363,6 +366,7 @@ def test_main_logs_search_and_reranker_models_without_instructions(
     with (
         patch("evals.main.build_modules", return_value={"search-search": module}),
         patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.load_instructions_config", return_value={}),
     ):
         _mock_mlflow_evaluate(mlflow_mod)
         main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])

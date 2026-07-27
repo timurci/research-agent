@@ -80,7 +80,7 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 - **Ubiquitous language.** Names say what the object is; no empty `Request`/`Result` wrappers around existing models.
 - **Pydantic invariants at construction.** Domain objects are never patched into validity after create.
-- **Workflow output is bare `list[PaperInfo]`.** No search-index provenance on results; `SearchIndexType` is a tool-dispatch key only.
+- **Workflow output is bare `list[PaperInfo]`.** No search-index provenance on results; `SearchIndex` is a tool-dispatch key only.
 - **Metrics live in the domain** as pure functions; `optimize` and `evals` consume them and must not reimplement “good.”
 - **No code comments** (inline/trailing). Google docstrings required (`ruff`).
 - **Local docstrings only.** Each docstring documents only what is local to the object. The definition is the single source of truth for what something *is* and does internally; the call site documents how it *composes* or *uses* it, and only when extra context is needed there. Do not restate an object's behavior, lifecycle, or invariants at a second site. Example: `SearchAgent` is defined in `src/research_agent/search/agents.py`; how a workflow or eval suite wires it belongs in that workflow/eval file, not duplicated on `SearchAgent` or in its module docstring.

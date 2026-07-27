@@ -50,7 +50,7 @@ def test_paper_search_workflow_returns_workflow() -> None:
 async def test_search_agent_builds_new_session_per_call() -> None:
     agent = search_agent(lm_config=_SEARCH_CONFIG)
     query = ResearchQuery(text="quantum error correction codes")
-    constructed: list[tuple[object, object, object]] = []
+    constructed: list[tuple[object, object, object, object]] = []
 
     class _StubSearchAgent:
         def __init__(
@@ -58,8 +58,10 @@ async def test_search_agent_builds_new_session_per_call() -> None:
             lm_config: object,
             session: object,
             lit_search: object,
+            *,
+            instructions_path: object = None,
         ) -> None:
-            constructed.append((lm_config, session, lit_search))
+            constructed.append((lm_config, session, lit_search, instructions_path))
 
         async def __call__(self, data: ResearchQuery) -> list[PaperInfo]:
             assert data is query
@@ -76,11 +78,13 @@ async def test_search_agent_builds_new_session_per_call() -> None:
     assert isinstance(constructed[0][1], InMemorySession)
     assert isinstance(constructed[1][1], InMemorySession)
     assert constructed[0][2] is constructed[1][2]
+    assert constructed[0][3] is None
+    assert constructed[1][3] is None
 
 
 @pytest.mark.asyncio
 async def test_search_agent_defaults_to_yaml_search_role() -> None:
-    captured: list[LMConfig] = []
+    captured: list[tuple[LMConfig, object]] = []
     yaml_config = LMConfig(model="openai/from-yaml-search")
 
     class _StubSearchAgent:
@@ -89,8 +93,10 @@ async def test_search_agent_defaults_to_yaml_search_role() -> None:
             lm_config: LMConfig,
             _session: object,
             _lit_search: object,
+            *,
+            instructions_path: object = None,
         ) -> None:
-            captured.append(lm_config)
+            captured.append((lm_config, instructions_path))
 
         async def __call__(self, _data: ResearchQuery) -> list[PaperInfo]:
             return []
@@ -103,7 +109,7 @@ async def test_search_agent_defaults_to_yaml_search_role() -> None:
         await agent(ResearchQuery(text="default config check query text"))
 
     load.assert_called_once_with("search-search")
-    assert captured == [yaml_config]
+    assert captured == [(yaml_config, None)]
 
 
 @pytest.mark.asyncio
@@ -113,7 +119,7 @@ async def test_search_agent_uses_injected_lm_config() -> None:
         api_key="search-key",
         base_url=HttpUrl("http://search.example/v1"),
     )
-    captured: list[LMConfig] = []
+    captured: list[tuple[LMConfig, object]] = []
 
     class _StubSearchAgent:
         def __init__(
@@ -121,8 +127,10 @@ async def test_search_agent_uses_injected_lm_config() -> None:
             lm_config: LMConfig,
             _session: object,
             _lit_search: object,
+            *,
+            instructions_path: object = None,
         ) -> None:
-            captured.append(lm_config)
+            captured.append((lm_config, instructions_path))
 
         async def __call__(self, _data: ResearchQuery) -> list[PaperInfo]:
             return []
@@ -132,7 +140,8 @@ async def test_search_agent_uses_injected_lm_config() -> None:
         await agent(ResearchQuery(text="injected config check query text"))
 
     assert len(captured) == 1
-    assert captured[0] is custom
+    assert captured[0][0] is custom
+    assert captured[0][1] is None
 
 
 def test_reranker_defaults_to_yaml_rerank_role() -> None:
@@ -174,7 +183,7 @@ async def test_paper_search_workflow_forwards_lm_configs() -> None:
         api_key="rerank-key",
         base_url=HttpUrl("http://rerank.example/v1"),
     )
-    captured_search: list[LMConfig] = []
+    captured_search: list[tuple[LMConfig, object]] = []
 
     class _StubSearchAgent:
         def __init__(
@@ -182,8 +191,10 @@ async def test_paper_search_workflow_forwards_lm_configs() -> None:
             lm_config: LMConfig,
             _session: object,
             _lit_search: object,
+            *,
+            instructions_path: object = None,
         ) -> None:
-            captured_search.append(lm_config)
+            captured_search.append((lm_config, instructions_path))
 
         async def __call__(self, _data: ResearchQuery) -> list[PaperInfo]:
             return []
@@ -200,5 +211,5 @@ async def test_paper_search_workflow_forwards_lm_configs() -> None:
         assert isinstance(workflow, PaperSearchWorkflow)
         await workflow(ResearchQuery(text="workflow lm config forward check"))
 
-    assert captured_search == [search_config]
+    assert captured_search == [(search_config, None)]
     assert reranker_cls.call_args.args[0] is rerank_config

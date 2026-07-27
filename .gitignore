@@ -28,5 +28,6 @@ data/**/output/*
 mlflow.db
 
 # Local LM endpoints / secrets (copy from config/lm.example.yaml)
-config/lm.yaml
+config/*.yaml
+!config/*.example.yaml
 .env

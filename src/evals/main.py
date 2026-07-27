@@ -24,7 +24,13 @@ import mlflow
 
 from evals.harness import EVAL_SEED, sample_rows
 from evals.search.modules import MODULE_NAMES, build_modules
-from research_agent.shared.lm_config import (
+from research_agent.shared.config.instructions import (
+    DEFAULT_INSTRUCTIONS_CONFIG_PATH,
+    InstructionsConfig,
+    file_sha256,
+    load_instructions_config,
+)
+from research_agent.shared.config.lm import (
     DEFAULT_LM_CONFIG_PATH,
     ROLE_SEARCH_RERANK,
     ROLE_SEARCH_SEARCH,
@@ -39,6 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from evals.harness import EvalModule
+    from research_agent.shared.agent import LMConfig
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -72,6 +79,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--instructions",
+        type=Path,
+        default=DEFAULT_INSTRUCTIONS_CONFIG_PATH,
+        help=(
+            "YAML instructions config path mapping module names to saved "
+            f"DSPy programs (default: {DEFAULT_INSTRUCTIONS_CONFIG_PATH})."
+        ),
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         dest="list_modules",
@@ -95,7 +111,14 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_module(module: EvalModule, *, seed: int) -> None:
+def _run_module(
+    module: EvalModule,
+    *,
+    search_lm_config: LMConfig,
+    rerank_lm_config: LMConfig,
+    instructions: InstructionsConfig,
+    seed: int,
+) -> None:
     """Load data, subsample to the module limit, and run ``mlflow.genai.evaluate``."""
     data = module.load_data()
     logger.info("[%s] loaded %d rows", module.name, len(data))
@@ -114,9 +137,18 @@ def _run_module(module: EvalModule, *, seed: int) -> None:
     predict_fn = module.build_predict_fn()
     scorers = list(module.build_scorers())
 
-    params: dict[str, int] = {"eval.rows": len(data), "eval.seed": seed}
+    params: dict[str, object] = {
+        "eval.rows": len(data),
+        "eval.seed": seed,
+        "search.model": search_lm_config.model,
+        "reranker.model": rerank_lm_config.model,
+    }
     if module.sample_limit is not None:
         params["eval.sample_limit"] = module.sample_limit
+    if "search-search" in instructions:
+        instruction_path = instructions["search-search"]
+        params["search.instructions.path"] = str(instruction_path)
+        params["search.instructions.sha256"] = file_sha256(instruction_path)
 
     with mlflow.start_run(run_name=module.name):
         mlflow.set_tag("eval.module", module.name)
@@ -182,9 +214,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     if not args.modules:
         parser.error("at least one module is required (or pass --list)")
 
+    instructions = load_instructions_config(args.instructions)
+    search_lm_config = lm_config(ROLE_SEARCH_SEARCH, path=args.config)
+    rerank_lm_config = lm_config(ROLE_SEARCH_RERANK, path=args.config)
     modules = build_modules(
-        search_lm_config=lm_config(ROLE_SEARCH_SEARCH, path=args.config),
-        rerank_lm_config=lm_config(ROLE_SEARCH_RERANK, path=args.config),
+        search_lm_config=search_lm_config,
+        rerank_lm_config=rerank_lm_config,
+        instructions=instructions,
     )
     if args.limit is not None:
         if args.limit < 1:
@@ -202,7 +238,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     _disable_dspy_disk_cache()
 
     for name in args.modules:
-        _run_module(modules[name], seed=args.seed)
+        _run_module(
+            modules[name],
+            search_lm_config=search_lm_config,
+            rerank_lm_config=rerank_lm_config,
+            instructions=instructions,
+            seed=args.seed,
+        )
 
 
 if __name__ == "__main__":

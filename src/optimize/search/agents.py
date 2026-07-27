@@ -38,8 +38,8 @@ from research_agent.search.agents import (
     build_search_react,
 )
 from research_agent.search.tools import LiteratureSearch, SessionLiteratureSearch
-from research_agent.shared.lm_config import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
-from research_agent.shared.lm_config import lm_config as load_lm_config
+from research_agent.shared.config.lm import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
+from research_agent.shared.config.lm import lm_config as load_lm_config
 from research_agent.shared.session import InMemorySession, ScopedSession
 
 if TYPE_CHECKING:

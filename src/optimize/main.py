@@ -37,14 +37,14 @@ from optimize.search.modules import (
     split_train_val,
     train_fraction_for_pool_size,
 )
-from research_agent.shared.dspy import dspy_lm
-from research_agent.shared.lm_config import (
+from research_agent.shared.config.lm import (
     DEFAULT_LM_CONFIG_PATH,
     ROLE_OPTIMIZE_TEACHER,
     ROLE_SEARCH_RERANK,
     ROLE_SEARCH_SEARCH,
     lm_config,
 )
+from research_agent.shared.dspy import dspy_lm
 
 __all__ = ["MODULE_NAMES", "main"]
 

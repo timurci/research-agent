@@ -95,7 +95,8 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 - `src/datagen` — synthetic queries → `data/datagen/output/queries_train.jsonl` via `uv run generate-queries`.
 - `src/optimize` — DSPy GEPA optimization harness, currently optimizes the **search agent only** (not reranker, not e2e).
 - `src/evals` — MLflow scorer adapters + eval agent factories; run suites with `uv run -m evals.main --list` / `uv run -m evals.main --experiment NAME search-e2e search-search`.
-- LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.lm_config` (Infrastructure). Roles `search-search` and `search-rerank` are `LMConfig` field maps.
+- LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.config.lm` (Infrastructure). Roles `search-search` and `search-rerank` are `LMConfig` field maps.
+- Optimized instructions: copy `config/instructions.example.yaml` → `config/instructions.yaml` (gitignored). Loader is `research_agent.shared.config.instructions` (Infrastructure). Maps module names (e.g. `search-search`) to saved DSPy program paths.
 - Do not commit under `data/**/output/` except `.gitkeep`.
 
 ## What NOT to do

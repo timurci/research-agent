@@ -25,6 +25,8 @@ from research_agent.shared.agent import Agent
 from .models import PaperInfo, ResearchQuery, SearchStatus
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from research_agent.shared.agent import LMConfig
     from research_agent.shared.session import Session
 
@@ -73,6 +75,28 @@ def build_search_react(session_search: SessionLiteratureSearch) -> dspy.ReAct:
     )
 
 
+class _SearchProgram(dspy.Module):
+    """Runtime DSPy module wrapping the search ReAct.
+
+    Mirrors the shape of the GEPA-optimized ``SearchProgram`` so that
+    saved program JSON can be loaded onto the runtime agent's ReAct
+    predictors via ``dspy.Module.load``.
+    """
+
+    def __init__(self, session_search: SessionLiteratureSearch) -> None:
+        """Build the program with an owned ReAct module.
+
+        Args:
+            session_search: Session-backed literature tool.
+        """
+        super().__init__()
+        self.react = build_search_react(session_search)
+
+    async def aforward(self, research_query: ResearchQuery) -> SearchStatus:
+        prediction = await self.react.aforward(research_query=research_query)
+        return SearchStatus(prediction.status)
+
+
 class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
     """Search agent: ReAct tool use and session-bag return.
 
@@ -85,6 +109,8 @@ class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
         lm_config: LMConfig,
         session: Session,
         literature_search: LiteratureSearch,
+        *,
+        instructions_path: Path | None = None,
     ) -> None:
         """Initialize the search agent for a session.
 
@@ -93,6 +119,8 @@ class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
             session: Session holding ``search_results`` as
                 ``set[PaperInfo]`` when present.
             literature_search: Pure literature index client.
+            instructions_path: Optional path to a saved DSPy program whose
+                optimized instructions are loaded onto the ReAct.
         """
         self._lm = dspy.LM(
             model=lm_config.model,
@@ -102,7 +130,9 @@ class SearchAgent(Agent[ResearchQuery, list[PaperInfo]]):
         )
         self._session = session
         self._session_search = SessionLiteratureSearch(session, literature_search)
-        self._program = build_search_react(self._session_search)
+        self._program = _SearchProgram(self._session_search)
+        if instructions_path is not None:
+            self._program.load(str(instructions_path))
 
     async def __call__(self, data: ResearchQuery) -> list[PaperInfo]:
         """Search for papers and return the session bag as a list."""

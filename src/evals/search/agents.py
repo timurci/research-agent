@@ -24,11 +24,13 @@ from typing import TYPE_CHECKING
 from research_agent.search.agents import Reranker, SearchAgent
 from research_agent.search.tools import LiteratureSearch
 from research_agent.search.workflows import PaperSearchWorkflow
-from research_agent.shared.lm_config import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
-from research_agent.shared.lm_config import lm_config as load_lm_config
+from research_agent.shared.config.lm import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
+from research_agent.shared.config.lm import lm_config as load_lm_config
 from research_agent.shared.session import InMemorySession
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from research_agent.search.models import PaperInfo, ResearchQuery
     from research_agent.shared.agent import Agent, LMConfig
 
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
 def search_agent(
     *,
     lm_config: LMConfig | None = None,
+    instructions_path: Path | None = None,
 ) -> Agent[ResearchQuery, list[PaperInfo]]:
     """Search agent for eval: new session per task.
 
@@ -46,6 +49,8 @@ def search_agent(
     Args:
         lm_config: LM settings for constructed agents. Defaults to the
             ``search-search`` role from ``config/lm.yaml``.
+        instructions_path: Optional path to a saved DSPy program whose
+            optimized instructions are loaded onto each fresh search agent.
 
     Parameter name on the returned callable is ``data`` to match the
     ``Agent`` protocol. Prefer ``paper_search_workflow()`` as the MLflow
@@ -56,7 +61,12 @@ def search_agent(
     literature_search = LiteratureSearch()
 
     async def run(data: ResearchQuery) -> list[PaperInfo]:
-        agent = SearchAgent(config, InMemorySession(), literature_search)
+        agent = SearchAgent(
+            config,
+            InMemorySession(),
+            literature_search,
+            instructions_path=instructions_path,
+        )
         return await agent(data)
 
     return run
@@ -77,6 +87,7 @@ def paper_search_workflow(
     *,
     search_lm_config: LMConfig | None = None,
     rerank_lm_config: LMConfig | None = None,
+    search_instructions_path: Path | None = None,
 ) -> PaperSearchWorkflow:
     """Search → rerank workflow for ``predict_fn`` (query-only evalset).
 
@@ -86,8 +97,12 @@ def paper_search_workflow(
     Args:
         search_lm_config: Forwarded to ``search_agent``.
         rerank_lm_config: Forwarded to ``reranker``.
+        search_instructions_path: Forwarded to ``search_agent``.
     """
     return PaperSearchWorkflow(
-        search_agent(lm_config=search_lm_config),
+        search_agent(
+            lm_config=search_lm_config,
+            instructions_path=search_instructions_path,
+        ),
         reranker(lm_config=rerank_lm_config),
     )

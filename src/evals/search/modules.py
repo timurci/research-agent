@@ -25,6 +25,7 @@ from research_agent.search.models import PaperInfo, ResearchQuery
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from pathlib import Path
 
     from mlflow.genai.scorers import Scorer
 
@@ -76,6 +77,7 @@ def build_modules(
     *,
     search_lm_config: LMConfig,
     rerank_lm_config: LMConfig,
+    instructions: Mapping[str, Path] | None = None,
 ) -> dict[str, EvalModule]:
     """Build search eval modules with injected LM configs.
 
@@ -83,11 +85,19 @@ def build_modules(
         search_lm_config: ``search-search`` settings for the search agent.
         rerank_lm_config: ``search-rerank`` settings for workflow rerank
             and relevance scorers.
+        instructions: Optional module name → optimized program path.
+            Used to load GEPA-optimized instructions for the search agent.
     """
+    search_instructions_path = (
+        instructions.get("search-search") if instructions is not None else None
+    )
     return {
         "search-search": query_module(
             "search-search",
-            lambda: search_agent(lm_config=search_lm_config),
+            lambda: search_agent(
+                lm_config=search_lm_config,
+                instructions_path=search_instructions_path,
+            ),
             scorers=lambda: search_query_scorers(lm_config=rerank_lm_config),
             sample_limit=SEARCH_SAMPLE_LIMIT,
         ),
@@ -96,6 +106,7 @@ def build_modules(
             lambda: paper_search_workflow(
                 search_lm_config=search_lm_config,
                 rerank_lm_config=rerank_lm_config,
+                search_instructions_path=search_instructions_path,
             ),
             scorers=lambda: search_query_scorers(lm_config=rerank_lm_config),
             sample_limit=SEARCH_E2E_SAMPLE_LIMIT,

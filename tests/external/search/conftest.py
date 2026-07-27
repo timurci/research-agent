@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from research_agent.shared.lm_config import (
+from research_agent.shared.config.lm import (
     ROLE_SEARCH_RERANK,
     ROLE_SEARCH_SEARCH,
     lm_config,

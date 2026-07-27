@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -75,14 +76,48 @@ def test_build_modules_injects_lm_configs() -> None:
         modules["search-e2e"].build_predict_fn()
         modules["search-e2e"].build_scorers()
 
-    search_factory.assert_called_once_with(lm_config=_SEARCH)
+    search_factory.assert_called_once_with(
+        lm_config=_SEARCH,
+        instructions_path=None,
+    )
     workflow_factory.assert_called_once_with(
         search_lm_config=_SEARCH,
         rerank_lm_config=_RERANK,
+        search_instructions_path=None,
     )
     assert scorers_factory.call_count == 2
     for call in scorers_factory.call_args_list:
         assert call.kwargs == {"lm_config": _RERANK}
+
+
+def test_build_modules_forwards_search_instructions() -> None:
+    instructions = {"search-search": Path("data/optimize/output/search-search.json")}
+    modules = build_modules(
+        search_lm_config=_SEARCH,
+        rerank_lm_config=_RERANK,
+        instructions=instructions,
+    )
+    with (
+        patch("evals.search.modules.search_agent") as search_factory,
+        patch("evals.search.modules.paper_search_workflow") as workflow_factory,
+        patch("evals.search.modules.search_query_scorers") as scorers_factory,
+    ):
+        search_factory.return_value = object()
+        workflow_factory.return_value = object()
+        scorers_factory.return_value = ()
+
+        modules["search-search"].build_predict_fn()
+        modules["search-e2e"].build_predict_fn()
+
+    search_factory.assert_called_once_with(
+        lm_config=_SEARCH,
+        instructions_path=instructions["search-search"],
+    )
+    workflow_factory.assert_called_once_with(
+        search_lm_config=_SEARCH,
+        rerank_lm_config=_RERANK,
+        search_instructions_path=instructions["search-search"],
+    )
 
 
 def test_query_module_binds_name() -> None:

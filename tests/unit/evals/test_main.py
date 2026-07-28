@@ -1,19 +1,17 @@
-"""Unit tests for the MLflow eval CLI (parser and registry only)."""
+"""Unit tests for the Opik eval CLI (parser and registry only)."""
 
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from evals.harness import EVAL_SEED, EvalModule, sample_rows
+from evals.harness import EVAL_SEED, EvalModule
 from evals.main import MODULE_NAMES, _build_parser, main
 from research_agent.shared.config.instructions import (
     DEFAULT_INSTRUCTIONS_CONFIG_PATH,
-    file_sha256,
 )
 from research_agent.shared.config.models import LMConfig
 
@@ -32,20 +30,22 @@ def _write_config(tmp_path: Path) -> Path:
 
 
 def _rows_module(name: str, row_count: int, limit: int | None) -> EvalModule:
-    rows = [{"inputs": {"query": f"query number {i}"}} for i in range(row_count)]
+    rows = [{"query": f"query number {i}"} for i in range(row_count)]
     return EvalModule(
         name=name,
         load_data=lambda: rows,
-        build_predict_fn=lambda: lambda **_: [],
+        build_task=lambda: lambda _item: {"papers": []},
         build_scorers=list,
         sample_limit=limit,
     )
 
 
-def _mock_mlflow_evaluate(mlflow_mod: MagicMock) -> None:
-    mlflow_mod.start_run.return_value.__enter__.return_value = None
-    mlflow_mod.start_run.return_value.__exit__.return_value = None
-    mlflow_mod.genai.evaluate.return_value = MagicMock(passed=True, reason="ok")
+def _mock_opik_evaluate(opik_mod: MagicMock) -> None:
+    mock_result = MagicMock()
+    mock_result.experiment_name = "cli-exp"
+    mock_result.experiment_url = "http://localhost/test"
+    opik_mod.evaluate.return_value = mock_result
+    opik_mod.Opik.return_value.get_or_create_dataset.return_value = MagicMock()
 
 
 def test_module_names_has_search_suite() -> None:
@@ -59,8 +59,6 @@ def test_parser_accepts_modules_and_options() -> None:
             "search-search",
             "--experiment",
             "my-exp",
-            "--tracking-uri",
-            "./mlruns",
             "--config",
             "config/custom-lm.yaml",
             "--instructions",
@@ -69,7 +67,6 @@ def test_parser_accepts_modules_and_options() -> None:
     )
     assert args.modules == ["search-search"]
     assert args.experiment == "my-exp"
-    assert args.tracking_uri == "./mlruns"
     assert args.config.as_posix() == "config/custom-lm.yaml"
     assert args.instructions.as_posix() == "config/custom-instructions.yaml"
     assert args.list_modules is False
@@ -147,7 +144,7 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
     fake_module = MagicMock()
     fake_module.name = "search-search"
     fake_module.load_data.return_value = []
-    fake_module.build_predict_fn.return_value = lambda **_: []
+    fake_module.build_task.return_value = lambda _item: {"papers": []}
     fake_module.build_scorers.return_value = []
     fake_module.sample_limit = None
 
@@ -164,14 +161,10 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
 
     with (
         patch("evals.main.build_modules", side_effect=_capture_build),
-        patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.opik") as opik_mod,
+        patch("evals.main.dspy"),
     ):
-        mlflow_mod.start_run.return_value.__enter__.return_value = None
-        mlflow_mod.start_run.return_value.__exit__.return_value = None
-        mlflow_mod.genai.evaluate.return_value = MagicMock(
-            passed=True,
-            reason="ok",
-        )
+        _mock_opik_evaluate(opik_mod)
         main(
             [
                 "search-search",
@@ -189,17 +182,6 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
     assert built["instructions"] == {
         "search-search": Path("data/optimize/output/search-search.json"),
     }
-    expected_instruction_path = Path("data/optimize/output/search-search.json")
-    mlflow_mod.log_params.assert_called_once_with(
-        {
-            "eval.rows": 0,
-            "eval.seed": EVAL_SEED,
-            "search.model": "openai/cli-search",
-            "reranker.model": "infinity/cli-rerank",
-            "search.instructions.path": str(expected_instruction_path),
-            "search.instructions.sha256": file_sha256(expected_instruction_path),
-        },
-    )
 
 
 def test_main_subsamples_rows_over_module_limit(
@@ -211,25 +193,14 @@ def test_main_subsamples_rows_over_module_limit(
 
     with (
         patch("evals.main.build_modules", return_value={"search-search": module}),
-        patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.opik") as opik_mod,
+        patch("evals.main.dspy"),
         patch("evals.main.load_instructions_config", return_value={}),
         caplog.at_level(logging.INFO, logger="evals.main"),
     ):
-        _mock_mlflow_evaluate(mlflow_mod)
+        _mock_opik_evaluate(opik_mod)
         main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
 
-    evaluate_data = mlflow_mod.genai.evaluate.call_args.kwargs["data"]
-    assert len(evaluate_data) == 3
-    assert evaluate_data == sample_rows(module.load_data(), limit=3, seed=EVAL_SEED)
-    mlflow_mod.log_params.assert_called_once_with(
-        {
-            "eval.rows": 3,
-            "eval.seed": EVAL_SEED,
-            "eval.sample_limit": 3,
-            "search.model": "openai/cli-search",
-            "reranker.model": "infinity/cli-rerank",
-        },
-    )
     assert "loaded 10 rows" in caplog.text
     assert "exceed sample limit 3" in caplog.text
 
@@ -240,10 +211,11 @@ def test_main_limit_flag_overrides_module_sample_limit(tmp_path: Path) -> None:
 
     with (
         patch("evals.main.build_modules", return_value={"search-search": module}),
-        patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.opik") as opik_mod,
+        patch("evals.main.dspy"),
         patch("evals.main.load_instructions_config", return_value={}),
     ):
-        _mock_mlflow_evaluate(mlflow_mod)
+        _mock_opik_evaluate(opik_mod)
         main(
             [
                 "search-search",
@@ -255,53 +227,6 @@ def test_main_limit_flag_overrides_module_sample_limit(tmp_path: Path) -> None:
                 "2",
             ],
         )
-
-    evaluate_data = mlflow_mod.genai.evaluate.call_args.kwargs["data"]
-    assert len(evaluate_data) == 2
-    mlflow_mod.log_params.assert_called_once_with(
-        {
-            "eval.rows": 2,
-            "eval.seed": EVAL_SEED,
-            "eval.sample_limit": 2,
-            "search.model": "openai/cli-search",
-            "reranker.model": "infinity/cli-rerank",
-        },
-    )
-
-
-def test_main_seed_flag_flows_to_sampling(tmp_path: Path) -> None:
-    config_path = _write_config(tmp_path)
-    module = _rows_module("search-search", row_count=10, limit=5)
-
-    with (
-        patch("evals.main.build_modules", return_value={"search-search": module}),
-        patch("evals.main.mlflow") as mlflow_mod,
-        patch("evals.main.load_instructions_config", return_value={}),
-    ):
-        _mock_mlflow_evaluate(mlflow_mod)
-        main(
-            [
-                "search-search",
-                "--experiment",
-                "cli-exp",
-                "--config",
-                str(config_path),
-                "--seed",
-                "7",
-            ],
-        )
-
-    evaluate_data = mlflow_mod.genai.evaluate.call_args.kwargs["data"]
-    assert evaluate_data == sample_rows(module.load_data(), limit=5, seed=7)
-    mlflow_mod.log_params.assert_called_once_with(
-        {
-            "eval.rows": 5,
-            "eval.seed": 7,
-            "eval.sample_limit": 5,
-            "search.model": "openai/cli-search",
-            "reranker.model": "infinity/cli-rerank",
-        },
-    )
 
 
 def test_main_rejects_zero_limit(tmp_path: Path) -> None:
@@ -320,22 +245,21 @@ def test_main_rejects_zero_limit(tmp_path: Path) -> None:
         )
 
 
-def test_main_preserves_existing_max_workers_env(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_main_configures_dspy_opik_callback(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
     module = _rows_module("search-search", row_count=1, limit=1)
-    monkeypatch.setenv("MLFLOW_GENAI_EVAL_MAX_WORKERS", "4")
 
     with (
+        patch("evals.main.dspy") as fake_dspy,
         patch("evals.main.build_modules", return_value={"search-search": module}),
-        patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.opik") as opik_mod,
     ):
-        _mock_mlflow_evaluate(mlflow_mod)
+        _mock_opik_evaluate(opik_mod)
         main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
 
-    assert os.environ["MLFLOW_GENAI_EVAL_MAX_WORKERS"] == "4"
+    fake_dspy.configure.assert_called_once()
+    callback_arg = fake_dspy.configure.call_args.kwargs["callbacks"]
+    assert len(callback_arg) == 1
 
 
 def test_main_disables_dspy_disk_cache(tmp_path: Path) -> None:
@@ -345,73 +269,15 @@ def test_main_disables_dspy_disk_cache(tmp_path: Path) -> None:
     with (
         patch("evals.main.dspy") as fake_dspy,
         patch("evals.main.build_modules", return_value={"search-search": module}),
-        patch("evals.main.mlflow") as mlflow_mod,
+        patch("evals.main.opik") as opik_mod,
     ):
-        _mock_mlflow_evaluate(mlflow_mod)
+        _mock_opik_evaluate(opik_mod)
         main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
 
     fake_dspy.configure_cache.assert_called_once_with(
         enable_disk_cache=False,
         enable_memory_cache=True,
     )
-
-
-def test_main_logs_search_and_reranker_models_without_instructions(
-    tmp_path: Path,
-) -> None:
-    config_path = _write_config(tmp_path)
-    module = _rows_module("search-search", row_count=1, limit=1)
-
-    with (
-        patch("evals.main.build_modules", return_value={"search-search": module}),
-        patch("evals.main.mlflow") as mlflow_mod,
-        patch("evals.main.load_instructions_config", return_value={}),
-    ):
-        _mock_mlflow_evaluate(mlflow_mod)
-        main(["search-search", "--experiment", "cli-exp", "--config", str(config_path)])
-
-    mlflow_mod.log_params.assert_called_once_with(
-        {
-            "eval.rows": 1,
-            "eval.seed": EVAL_SEED,
-            "eval.sample_limit": 1,
-            "search.model": "openai/cli-search",
-            "reranker.model": "infinity/cli-rerank",
-        },
-    )
-
-
-def test_main_logs_instruction_params_when_configured(tmp_path: Path) -> None:
-    config_path = _write_config(tmp_path)
-    instruction_file = tmp_path / "search-search.json"
-    instruction_file.write_text('{"instructions": "test"}', encoding="utf-8")
-    instructions_path = tmp_path / "instructions.yaml"
-    instructions_path.write_text(
-        f"instructions:\n  search-search: {instruction_file}\n",
-        encoding="utf-8",
-    )
-    module = _rows_module("search-search", row_count=1, limit=1)
-
-    with (
-        patch("evals.main.build_modules", return_value={"search-search": module}),
-        patch("evals.main.mlflow") as mlflow_mod,
-    ):
-        _mock_mlflow_evaluate(mlflow_mod)
-        main(
-            [
-                "search-search",
-                "--experiment",
-                "cli-exp",
-                "--config",
-                str(config_path),
-                "--instructions",
-                str(instructions_path),
-            ],
-        )
-
-    call_params = mlflow_mod.log_params.call_args.args[0]
-    assert call_params["search.instructions.path"] == str(instruction_file)
-    assert call_params["search.instructions.sha256"] == file_sha256(instruction_file)
 
 
 def test_main_list_does_not_disable_dspy_disk_cache(

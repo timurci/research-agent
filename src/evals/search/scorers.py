@@ -1,10 +1,10 @@
-"""MLflow scorers adapting search domain metrics.
+"""Opik scoring metrics adapting search domain metrics.
 
 Layer: Infrastructure (evaluation harness).
 
 Search eval datasets are query-only: rows carry a ``ResearchQuery`` and
-no gold paper lists. ``predict_fn`` is the search ``Agent`` /
-``PaperSearchWorkflow`` (``ResearchQuery`` → ``list[PaperInfo]``).
+no gold paper lists. The task function is the search ``Agent`` /
+``PaperSearchWorkflow`` (``ResearchQuery`` -> ``list[PaperInfo]``).
 
 Relevance scores are produced at score time by a reranker agent, not
 loaded from expectations. Default query scorers use the same
@@ -21,10 +21,10 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Protocol
 
-from mlflow.genai.scorers import scorer
+from opik.evaluation.metrics import BaseMetric
 from pydantic import TypeAdapter, ValidationError
 
-from evals.feedback import code_assessment_source, evaluation_score_to_feedback
+from evals.feedback import evaluation_score_to_score_result
 from evals.search.agents import reranker
 from research_agent.search.metrics import (
     RelevanceMetric,
@@ -36,12 +36,9 @@ from research_agent.search.models import PaperInfo, ResearchQuery
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Mapping, Sequence
 
-    from mlflow.entities import Feedback
-    from mlflow.genai.scorers import Scorer
+    from opik.evaluation.metrics.score_result import ScoreResult
 
     from research_agent.shared.config.models import LMConfig
-
-SEARCH_METRICS_SOURCE = code_assessment_source("research_agent.search.metrics")
 
 
 class ScorerShapeError(Exception):
@@ -63,41 +60,11 @@ _PAPER_LIST_ADAPTER: TypeAdapter[list[PaperInfo]] = TypeAdapter(list[PaperInfo])
 
 
 def _require_paper_list(outputs: object) -> list[PaperInfo]:
-    """Narrow scorer outputs to ``list[PaperInfo]``."""
+    """Narrow ``papers`` value to ``list[PaperInfo]``."""
     try:
         return _PAPER_LIST_ADAPTER.validate_python(outputs)
     except ValidationError as exc:
-        msg = f"outputs must be list[PaperInfo]: {exc}"
-        raise ScorerShapeError(msg) from exc
-
-
-def research_query_from_inputs(inputs: object) -> ResearchQuery:
-    """Extract a ``ResearchQuery`` from MLflow scorer ``inputs``.
-
-    Expects a ``ResearchQuery`` or a kwargs dict with ``query`` (model or
-    field dict), matching ``load_search_eval_data`` / ``as_query_predict_fn``.
-
-    Args:
-        inputs: Value passed as the scorer ``inputs`` argument.
-
-    Returns:
-        Domain research query.
-
-    Raises:
-        ScorerShapeError: If ``inputs`` cannot be interpreted as a query.
-    """
-    match inputs:
-        case {"query": query}:
-            payload = query
-        case dict():
-            msg = "inputs must include 'query'"
-            raise ScorerShapeError(msg)
-        case _:
-            payload = inputs
-    try:
-        return ResearchQuery.model_validate(payload)
-    except ValidationError as exc:
-        msg = f"inputs must be ResearchQuery or dict with 'query': {exc}"
+        msg = f"papers must be list[PaperInfo]: {exc}"
         raise ScorerShapeError(msg) from exc
 
 
@@ -159,29 +126,16 @@ def relevance_metrics_from_ranking(
 def _run_coroutine[T](coro: Coroutine[object, object, T]) -> T:
     """Run an async coroutine from a synchronous scorer via ``asyncio.run``.
 
-    MLflow's scorer path is synchronous, so no event loop is running in
+    Opik's scorer path is synchronous, so no event loop is running in
     the calling thread.
     """
     return asyncio.run(coro)
 
 
-def _relevance_feedback(
-    papers: list[PaperInfo],
-    relevance_scores: list[RelevanceMetric],
-) -> Feedback:
-    """Map domain relevance metric output to MLflow Feedback."""
-    score = search_result_relevance(papers, relevance_scores)
-    return evaluation_score_to_feedback(
-        score,
-        source=SEARCH_METRICS_SOURCE,
-        name="search_result_relevance",
-    )
-
-
 def search_query_scorers(
     *,
     lm_config: LMConfig | None = None,
-) -> Sequence[Scorer]:
+) -> Sequence[BaseMetric]:
     """Default scorers for query-only search modules.
 
     Relevance uses the eval reranker (same family as the e2e workflow).
@@ -192,53 +146,56 @@ def search_query_scorers(
             Defaults to the ``search-rerank`` role from ``config/lm.yaml``.
     """
     return (
-        search_result_count_scorer,
-        make_search_result_relevance_scorer(reranker(lm_config=lm_config)),
+        SearchResultCountMetric(),
+        SearchResultRelevanceMetric(labeler=reranker(lm_config=lm_config)),
     )
 
 
-def make_search_result_relevance_scorer(labeler: _RelevanceLabeler) -> Scorer:
-    """Build an MLflow scorer that labels relevance via a reranker agent.
+class SearchResultCountMetric(BaseMetric):
+    """Opik metric for search result volume (integer count vs target)."""
 
-    Search eval rows have no gold relevance labels. The returned scorer
-    calls *labeler* with ``(ResearchQuery, list[PaperInfo])`` and feeds
-    the scores into the domain ``search_result_relevance`` metric.
+    def __init__(self) -> None:
+        """Initialize with metric name."""
+        super().__init__(name="search_result_count")
 
-    Construct per evalset, e.g.::
+    def score(
+        self,
+        *,
+        papers: object,
+        **kwargs: object,  # noqa: ARG002  # absorbs extra merged keys from Opik
+    ) -> ScoreResult:
+        """Score agent outputs using the domain count metric."""
+        score = search_result_count(_require_paper_list(papers))
+        return evaluation_score_to_score_result(score, name=self.name)
 
-        make_search_result_relevance_scorer(reranker())
 
-    Args:
-        labeler: Async relevance provider (typically ``Reranker``).
+class SearchResultRelevanceMetric(BaseMetric):
+    """Opik metric that labels relevance via a reranker agent.
 
-    Returns:
-        MLflow code-based scorer for ``mlflow.genai.evaluate``.
+    Search eval rows have no gold relevance labels. The metric calls
+    the labeler with ``(ResearchQuery, list[PaperInfo])`` and feeds the
+    scores into the domain ``search_result_relevance`` metric.
     """
 
-    @scorer(name="search_result_relevance")
-    def search_result_relevance_scorer(
+    def __init__(self, *, labeler: _RelevanceLabeler) -> None:
+        """Initialize with a relevance labeler."""
+        super().__init__(name="search_result_relevance")
+        self._labeler = labeler
+
+    def score(
+        self,
         *,
-        inputs: object = None,
-        outputs: object = None,
-    ) -> Feedback:
+        query: object,
+        papers: object,
+        **kwargs: object,  # noqa: ARG002  # absorbs extra merged keys from Opik
+    ) -> ScoreResult:
         """Score agent outputs using reranker-produced relevance."""
-        papers = _require_paper_list(outputs)
-        if not papers:
-            return _relevance_feedback([], [])
-        query = research_query_from_inputs(inputs)
-        ranking = _run_coroutine(labeler.relevance((query, papers)))
-        relevance_scores = relevance_metrics_from_ranking(papers, ranking)
-        return _relevance_feedback(papers, relevance_scores)
-
-    return search_result_relevance_scorer
-
-
-@scorer(name="search_result_count")
-def search_result_count_scorer(*, outputs: object = None) -> Feedback:
-    """MLflow scorer for search result volume (integer count vs target)."""
-    score = search_result_count(_require_paper_list(outputs))
-    return evaluation_score_to_feedback(
-        score,
-        source=SEARCH_METRICS_SOURCE,
-        name="search_result_count",
-    )
+        papers_list = _require_paper_list(papers)
+        if not papers_list:
+            empty_score = search_result_relevance([], [])
+            return evaluation_score_to_score_result(empty_score, name=self.name)
+        research_query = ResearchQuery.model_validate(query)
+        ranking = _run_coroutine(self._labeler.relevance((research_query, papers_list)))
+        relevance_scores = relevance_metrics_from_ranking(papers_list, ranking)
+        score = search_result_relevance(papers_list, relevance_scores)
+        return evaluation_score_to_score_result(score, name=self.name)

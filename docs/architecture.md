@@ -41,7 +41,7 @@ Application methods and the ports they call are `async`. Synchronous blocking wo
 DSPy optimization (`src/optimize`) and offline evaluation (`src/evals`) are build-time tooling, not request-handling. They are never imported by `research_agent` at runtime. They stay pinned to the runtime by:
 
 1. **Shared signatures** — optimization compiles against the same signature definitions the runtime adapters use.
-2. **Shared domain metrics** — quality definitions live in the domain as pure functions over domain value objects. The optimizer and MLflow scorers consume them; scorers adapt I/O and do not redefine “good.”
+2. **Shared domain metrics** — quality definitions live in the domain as pure functions over domain value objects. The optimizer and Opik scorers consume them; scorers adapt I/O and do not redefine “good.”
 
 `src/datagen` is the same class of sibling tooling (synthetic training queries).
 

@@ -11,7 +11,7 @@ Builders accept an optional ``lm_config`` to inject a custom config
 (tests, CLI composition root, alternate endpoints) without reading the
 file. Prefer injection over ambient defaults.
 
-MLflow scorers import these agents; they do not import DSPy themselves.
+Opik scorers import these agents; they do not import DSPy themselves.
 
 ``SearchAgent`` binds a session at construction and stores
 ``search_results`` as ``set[PaperInfo]`` when present.

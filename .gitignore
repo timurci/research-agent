@@ -24,9 +24,6 @@ data/**/output/*
 .pi
 .agents
 
-# MLflow generated files
-mlflow.db
-
 # Local LM endpoints / secrets (copy from config/lm.example.yaml)
 config/*.yaml
 !config/*.example.yaml

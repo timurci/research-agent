@@ -1,7 +1,7 @@
-"""Unit tests for search MLflow scorer adapters.
+"""Unit tests for search Opik scoring metric adapters.
 
 Exercises agent-aligned scoring and reranker-backed relevance. No
-network, no ``mlflow.genai.evaluate`` run.
+network, no ``opik.evaluate`` run.
 """
 
 from __future__ import annotations
@@ -9,15 +9,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from mlflow.entities import Feedback
+from opik.evaluation.metrics.score_result import ScoreResult
 from pydantic import HttpUrl
 
 from evals.search.scorers import (
     ScorerShapeError,
-    make_search_result_relevance_scorer,
+    SearchResultCountMetric,
+    SearchResultRelevanceMetric,
     relevance_metrics_from_ranking,
-    research_query_from_inputs,
-    search_result_count_scorer,
 )
 from research_agent.search.metrics import RelevanceMetric
 from research_agent.search.models import PaperInfo, ResearchQuery
@@ -72,62 +71,38 @@ class _FakeReranker:
         ]
 
 
-def test_research_query_from_inputs_accepts_model() -> None:
-    query = ResearchQuery(text="quantum error correction")
-    assert research_query_from_inputs(query) == query
+def test_count_metric_below_pass_floor() -> None:
+    papers = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
+    metric = SearchResultCountMetric()
+    result = metric.score(papers=papers)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+
+    assert isinstance(result, ScoreResult)
+    assert result.name == "search_result_count"
+    assert result.value == 0.038
+    assert result.metadata == {"passing": "False"}
+    assert "Returned 2 results" in (result.reason or "")
 
 
-def test_research_query_from_inputs_accepts_query_key() -> None:
-    query = ResearchQuery(text="quantum error correction")
-    assert research_query_from_inputs({"query": query}) == query
+def test_count_metric_pass_with_partial_score() -> None:
+    papers = [_make_paper(f"Paper Number {i:03d}") for i in range(20)]
+    metric = SearchResultCountMetric()
+    result = metric.score(papers=papers)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+
+    assert isinstance(result, ScoreResult)
+    assert result.value == 0.38
+    assert result.metadata == {"passing": "True"}
+    assert "Returned 20 results" in (result.reason or "")
 
 
-def test_research_query_from_inputs_accepts_dict_payload() -> None:
-    result = research_query_from_inputs({"query": {"text": "quantum error correction"}})
-    assert result == ResearchQuery(text="quantum error correction")
+def test_count_metric_meets_target() -> None:
+    papers = [_make_paper(f"Paper Number {i:03d}") for i in range(50)]
+    metric = SearchResultCountMetric()
+    result = metric.score(papers=papers)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
 
-
-def test_research_query_from_inputs_rejects_bad_shape() -> None:
-    with pytest.raises(ScorerShapeError, match="ResearchQuery or dict"):
-        research_query_from_inputs(42)
-
-
-def test_research_query_from_inputs_requires_query_key() -> None:
-    with pytest.raises(ScorerShapeError, match="query"):
-        research_query_from_inputs({"text": "quantum error correction codes"})
-
-
-def test_count_scorer_below_pass_floor() -> None:
-    outputs = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
-    feedback = search_result_count_scorer(outputs=outputs)
-
-    assert isinstance(feedback, Feedback)
-    assert feedback.name == "search_result_count"
-    assert feedback.value is False
-    assert feedback.metadata == {"score": str(0.95 * 2 / 50)}
-    assert "Returned 2 results" in (feedback.rationale or "")
-    assert feedback.source is not None
-    assert feedback.source.source_id == "research_agent.search.metrics"
-
-
-def test_count_scorer_pass_with_partial_score() -> None:
-    outputs = [_make_paper(f"Paper Number {i:03d}") for i in range(20)]
-    feedback = search_result_count_scorer(outputs=outputs)
-
-    assert isinstance(feedback, Feedback)
-    assert feedback.value is True
-    assert feedback.metadata == {"score": str(0.95 * 20 / 50)}
-    assert "Returned 20 results" in (feedback.rationale or "")
-
-
-def test_count_scorer_meets_target() -> None:
-    outputs = [_make_paper(f"Paper Number {i:03d}") for i in range(50)]
-    feedback = search_result_count_scorer(outputs=outputs)
-
-    assert isinstance(feedback, Feedback)
-    assert feedback.value is True
-    assert feedback.metadata == {"score": "0.95"}
-    assert "target 50 met" in (feedback.rationale or "")
+    assert isinstance(result, ScoreResult)
+    assert result.value == 0.95
+    assert result.metadata == {"passing": "True"}
+    assert "target 50 met" in (result.reason or "")
 
 
 def test_relevance_metrics_from_ranking_aligns_by_index() -> None:
@@ -167,66 +142,63 @@ def test_relevance_metrics_from_ranking_rejects_length_mismatch() -> None:
         )
 
 
-def test_require_paper_list_rejects_non_list_with_outputs_error() -> None:
+def test_require_paper_list_rejects_non_list() -> None:
+    metric = SearchResultCountMetric()
     with pytest.raises(ScorerShapeError, match="list\\[PaperInfo\\]"):
-        search_result_count_scorer(outputs="not-a-list")
+        metric.score(papers="not-a-list")  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
 
 
-def test_search_result_relevance_scorer_uses_reranker() -> None:
+def test_relevance_metric_uses_reranker() -> None:
     papers = [_make_paper(f"Paper Number {i:03d} Title") for i in range(4)]
     fake = _FakeReranker([0.7, 0.8, 0.9, 1.0])
-    scorer = make_search_result_relevance_scorer(fake)
+    metric = SearchResultRelevanceMetric(labeler=fake)
     query = ResearchQuery(text="neural network optimization methods")
 
-    feedback = scorer(inputs={"query": query}, outputs=papers)
+    result = metric.score(query=query, papers=papers)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
 
-    assert isinstance(feedback, Feedback)
-    assert feedback.name == "search_result_relevance"
-    assert feedback.value is True
-    assert feedback.metadata == {"score": "0.75"}
+    assert isinstance(result, ScoreResult)
+    assert result.name == "search_result_relevance"
+    assert result.value == 0.75
+    assert result.metadata == {"passing": "True"}
     assert len(fake.calls) == 1
     assert fake.calls[0][0] == query
     assert fake.calls[0][1] == papers
 
 
-def test_search_result_relevance_scorer_empty_outputs_skips_reranker() -> None:
+def test_relevance_metric_empty_outputs_skips_reranker() -> None:
     fake = _FakeReranker([])
-    scorer = make_search_result_relevance_scorer(fake)
+    metric = SearchResultRelevanceMetric(labeler=fake)
     query = ResearchQuery(text="neural network optimization methods")
 
-    feedback = scorer(inputs={"query": query}, outputs=[])
+    result = metric.score(query=query, papers=[])  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
 
-    assert isinstance(feedback, Feedback)
-    assert feedback.name == "search_result_relevance"
-    assert feedback.value is False
-    assert feedback.metadata == {"score": "0.0"}
-    assert "Empty input" in (feedback.rationale or "")
+    assert isinstance(result, ScoreResult)
+    assert result.name == "search_result_relevance"
+    assert result.value == 0.0
+    assert result.metadata == {"passing": "False"}
+    assert "Empty input" in (result.reason or "")
     assert fake.calls == []
 
 
-def test_search_result_relevance_scorer_low_relevance() -> None:
+def test_relevance_metric_low_relevance() -> None:
     papers = [_make_paper(f"Paper Number {i:03d} Title") for i in range(4)]
-    scorer = make_search_result_relevance_scorer(
-        _FakeReranker([0.0, 0.1, 0.2, 0.29]),
+    metric = SearchResultRelevanceMetric(
+        labeler=_FakeReranker([0.0, 0.1, 0.2, 0.29]),
     )
-    feedback = scorer(
-        inputs={"query": ResearchQuery(text="climate modeling techniques today")},
-        outputs=papers,
+    result = metric.score(  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+        query=ResearchQuery(text="climate modeling techniques today"),
+        papers=papers,
     )
-    assert isinstance(feedback, Feedback)
-    assert feedback.value is False
-    assert feedback.metadata == {"score": "0.0"}
-    assert "Too many low relevance" in (feedback.rationale or "")
+    assert isinstance(result, ScoreResult)
+    assert result.value == 0.0
+    assert result.metadata == {"passing": "False"}
+    assert "Too many low relevance" in (result.reason or "")
 
 
-def test_mlflow_scorer_wrappers_are_callable() -> None:
-    assert callable(search_result_count_scorer)
-    assert search_result_count_scorer.name == "search_result_count"
-
-
-def test_count_scorer_accepts_dict_paper_payloads() -> None:
+def test_count_metric_accepts_dict_paper_payloads() -> None:
     paper = _make_paper(_TITLE_A)
-    result = search_result_count_scorer(outputs=[paper.model_dump(mode="json")])
-    assert isinstance(result, Feedback)
+    metric = SearchResultCountMetric()
+    result = metric.score(papers=[paper.model_dump(mode="json")])  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+    assert isinstance(result, ScoreResult)
     assert result.name == "search_result_count"
-    assert result.value is False
+    assert result.value == 0.019

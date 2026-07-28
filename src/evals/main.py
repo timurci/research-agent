@@ -1,10 +1,9 @@
-"""CLI entrypoint for MLflow GenAI evaluation modules.
+"""CLI entrypoint for Opik evaluation modules.
 
 Usage::
 
     uv run -m evals.main --list
     uv run -m evals.main --experiment my-exp search-search
-    uv run -m evals.main --experiment my-exp --tracking-uri ./mlruns search-search
     uv run -m evals.main --experiment my-exp --config config/lm.yaml search-search
     uv run -m evals.main --experiment my-exp --limit 5 --seed 7 search-search
 """
@@ -13,14 +12,14 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import dspy
-import mlflow
+import opik
+from opik.integrations.dspy import OpikCallback
 
 from evals.harness import EVAL_SEED, sample_rows
 from evals.search.modules import MODULE_NAMES, build_modules
@@ -51,7 +50,7 @@ if TYPE_CHECKING:
 def _build_parser() -> argparse.ArgumentParser:
     """Build the evaluation CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description="Run MLflow GenAI evaluation modules.",
+        description="Run Opik evaluation modules.",
     )
     parser.add_argument(
         "modules",
@@ -62,12 +61,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--experiment",
         default=None,
-        help="MLflow experiment name (required unless --list).",
-    )
-    parser.add_argument(
-        "--tracking-uri",
-        default=None,
-        help="MLflow tracking URI (default: MLflow file-store default).",
+        help="Opik experiment name (required unless --list).",
     )
     parser.add_argument(
         "--config",
@@ -111,15 +105,16 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_module(
+def _run_module(  # noqa: PLR0913  # orchestration function with distinct config args
     module: EvalModule,
     *,
+    experiment_name: str,
     search_lm_config: LMConfig,
     rerank_lm_config: LMConfig,
     instructions: InstructionsConfig,
     seed: int,
 ) -> None:
-    """Load data, subsample to the module limit, and run ``mlflow.genai.evaluate``."""
+    """Load data, subsample to the module limit, and run ``opik.evaluate``."""
     data = module.load_data()
     logger.info("[%s] loaded %d rows", module.name, len(data))
 
@@ -134,56 +129,41 @@ def _run_module(
             seed,
         )
 
-    predict_fn = module.build_predict_fn()
+    task = module.build_task()
     scorers = list(module.build_scorers())
 
-    params: dict[str, object] = {
+    experiment_config: dict[str, object] = {
         "eval.rows": len(data),
         "eval.seed": seed,
         "search.model": search_lm_config.model,
         "reranker.model": rerank_lm_config.model,
     }
     if module.sample_limit is not None:
-        params["eval.sample_limit"] = module.sample_limit
+        experiment_config["eval.sample_limit"] = module.sample_limit
     if "search-search" in instructions:
         instruction_path = instructions["search-search"]
-        params["search.instructions.path"] = str(instruction_path)
-        params["search.instructions.sha256"] = file_sha256(instruction_path)
+        experiment_config["search.instructions.path"] = str(instruction_path)
+        experiment_config["search.instructions.sha256"] = file_sha256(instruction_path)
 
-    with mlflow.start_run(run_name=module.name):
-        mlflow.set_tag("eval.module", module.name)
-        mlflow.log_params(params)
-        result = mlflow.genai.evaluate(
-            data=data,
-            predict_fn=predict_fn,
-            scorers=scorers,
-        )
+    client = opik.Opik()
+    dataset = client.get_or_create_dataset(name=f"eval-{module.name}")
+    dataset.clear()
+    dataset.insert(data)
 
-    print(  # noqa: T201  # CLI status output, not logging
-        f"[done] {module.name}: passed={result.passed} reason={result.reason!r}",
-        file=sys.stderr,
+    result = opik.evaluate(
+        dataset=dataset,
+        task=task,
+        scoring_metrics=scorers,
+        experiment_name=experiment_name,
+        experiment_config=experiment_config,
+        verbose=0,
     )
 
-
-def _apply_mlflow_eval_env_defaults() -> None:
-    """Set project defaults for MLflow GenAI eval env vars when unset."""
-    skip_key = "MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION"
-    if os.environ.setdefault(skip_key, "true") == "true":
-        logger.info(
-            "Skipping MLflow predict_fn trace validation (%s=true); "
-            "predict_fn is already @mlflow.trace'd",
-            skip_key,
-        )
-
-    workers_key = "MLFLOW_GENAI_EVAL_MAX_WORKERS"
-    workers_default = "5"
-    if os.environ.setdefault(workers_key, workers_default) == workers_default:
-        logger.info(
-            "Limiting MLflow genai.evaluate concurrency (%s=%s); "
-            "override the env var to raise parallelism",
-            workers_key,
-            workers_default,
-        )
+    print(  # noqa: T201  # CLI status output, not logging
+        f"[done] {module.name}: experiment={result.experiment_name} "
+        f"url={result.experiment_url}",
+        file=sys.stderr,
+    )
 
 
 def _disable_dspy_disk_cache() -> None:
@@ -230,16 +210,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             for name, module in modules.items()
         }
 
-    if args.tracking_uri is not None:
-        mlflow.set_tracking_uri(args.tracking_uri)
-    mlflow.set_experiment(args.experiment)
-
-    _apply_mlflow_eval_env_defaults()
+    dspy.configure(callbacks=[OpikCallback()])
     _disable_dspy_disk_cache()
 
     for name in args.modules:
         _run_module(
             modules[name],
+            experiment_name=args.experiment,
             search_lm_config=search_lm_config,
             rerank_lm_config=rerank_lm_config,
             instructions=instructions,

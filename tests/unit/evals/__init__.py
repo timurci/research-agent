@@ -1,1 +1,1 @@
-"""Unit tests for the MLflow evaluation tooling package."""
+"""Unit tests for the Opik evaluation tooling package."""

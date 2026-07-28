@@ -64,7 +64,7 @@ def test_load_search_queries_maps_split() -> None:
     ]
 
 
-def test_load_search_eval_data_mlflow_shape() -> None:
+def test_load_search_eval_data_flat_shape() -> None:
     rows = [
         {
             "text": "outline inverse probability weighting methods",
@@ -77,12 +77,10 @@ def test_load_search_eval_data_mlflow_shape() -> None:
 
     assert data == [
         {
-            "inputs": {
-                "query": ResearchQuery(
-                    text="outline inverse probability weighting methods",
-                    domains=("statistics",),
-                ),
-            },
+            "query": ResearchQuery(
+                text="outline inverse probability weighting methods",
+                domains=("statistics",),
+            ).model_dump(),
         },
     ]
 

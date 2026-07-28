@@ -1,7 +1,8 @@
 """Unit tests for the search evaluation metrics.
 
 Exercises the pure domain metric functions:
-``search_result_relevance``, ``search_result_count``, and ``ndcg_at_10``.
+``search_result_relevance``, ``search_result_count``, ``ndcg_at_10``,
+and ``suggestion_length``.
 No network, no LLM, no async.
 """
 
@@ -16,11 +17,14 @@ from research_agent.search.metrics import (
     MIN_PASS_RESULT_COUNT,
     OVERSHOOT_HALF_CREDIT,
     SCORE_AT_TARGET,
+    SUGGESTION_MAX_WORDS,
+    SUGGESTION_MIN_WORDS,
     TARGET_RESULT_COUNT,
     RelevanceMetric,
     ndcg_at_10,
     search_result_count,
     search_result_relevance,
+    suggestion_length,
 )
 from research_agent.search.models import PaperInfo
 from research_agent.shared.metric import EvaluationScore
@@ -332,3 +336,55 @@ def test_search_result_count_meets_target_reason() -> None:
     assert score.score == pytest.approx(SCORE_AT_TARGET)
     assert f"target {TARGET_RESULT_COUNT} met" in score.reason
     assert f"pass floor {MIN_PASS_RESULT_COUNT}" in score.reason
+
+
+def _words(count: int) -> str:
+    return " ".join(f"w{i}" for i in range(count))
+
+
+_OVER_BY_ONE = SUGGESTION_MAX_WORDS + 1
+_OVER_BY_ONE_SCORE = SUGGESTION_MAX_WORDS / _OVER_BY_ONE
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_passing", "expected_score"),
+    [
+        ("", False, 0.0),
+        ("   \n\t  ", False, 0.0),
+        ("one", False, 0.0),
+        (_words(SUGGESTION_MIN_WORDS - 1), False, 0.0),
+        (_words(SUGGESTION_MIN_WORDS), True, 1.0),
+        (_words(SUGGESTION_MAX_WORDS), True, 1.0),
+        (_words(_OVER_BY_ONE), False, _OVER_BY_ONE_SCORE),
+        (_words(SUGGESTION_MAX_WORDS * 2), False, 0.5),
+    ],
+)
+def test_suggestion_length(
+    text: str,
+    expected_passing: bool,  # noqa: FBT001  # parametrize row is (text, passing, score)
+    expected_score: float,
+) -> None:
+    score = suggestion_length(text)
+    assert score.passing is expected_passing
+    assert score.score == pytest.approx(expected_score)
+
+
+def test_suggestion_length_whitespace_tokenization() -> None:
+    score = suggestion_length(_words(SUGGESTION_MIN_WORDS))
+    assert score.passing is True
+    assert score.score == 1.0
+
+
+def test_suggestion_length_over_limit_reason() -> None:
+    score = suggestion_length(_words(SUGGESTION_MAX_WORDS + 50))
+    assert score.passing is False
+    assert "verbose" in score.reason.lower()
+
+
+def test_suggestion_length_too_short_reason() -> None:
+    score = suggestion_length("")
+    assert score == EvaluationScore(
+        passing=False,
+        reason="Suggestion is too short, it's likely to be insufficient.",
+        score=0.0,
+    )

@@ -25,6 +25,8 @@ SCORE_AT_TARGET = 0.95
 OVERSHOOT_HALF_CREDIT = 50
 MIN_RELEVANCE_GRADE = 0
 MAX_RELEVANCE_GRADE = 3
+SUGGESTION_MIN_WORDS = 150
+SUGGESTION_MAX_WORDS = 500
 
 
 class RelevanceMetric(BaseModel):
@@ -218,3 +220,44 @@ def ndcg_at_10(
     if idcg == 0.0:
         return 0.0
     return dcg / idcg
+
+
+def suggestion_length(suggestion: str) -> EvaluationScore:
+    """Score suggestion length against the product word-count band.
+
+    Word count is whitespace-tokenized via ``str.split()`` (no language-
+    specific tokenization). Empty or whitespace-only text is 0 words.
+
+    - ``passing`` is true when
+      ``SUGGESTION_MIN_WORDS <= n <= SUGGESTION_MAX_WORDS``.
+    - ``score`` is ``1.0`` inside the band, ``0.0`` when too short, and
+      ``SUGGESTION_MAX_WORDS / n`` when over the max so longer overshoots
+      degrade continuously within ``[0, 1]``.
+
+    Args:
+        suggestion: Free-text research-direction suggestion.
+
+    Returns:
+        Evaluation score for length compliance.
+    """
+    word_count = len(suggestion.split())
+    if word_count < SUGGESTION_MIN_WORDS:
+        return EvaluationScore(
+            passing=False,
+            reason="Suggestion is too short, it's likely to be insufficient.",
+            score=0.0,
+        )
+    if word_count <= SUGGESTION_MAX_WORDS:
+        return EvaluationScore(
+            passing=True,
+            reason="Suggestion has adequate length.",
+            score=1.0,
+        )
+    return EvaluationScore(
+        passing=False,
+        reason=(
+            "Suggestion is too verbose, it likely contains too much detail "
+            "and hurts readability."
+        ),
+        score=SUGGESTION_MAX_WORDS / word_count,
+    )

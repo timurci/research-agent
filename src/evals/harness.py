@@ -1,4 +1,4 @@
-"""Shared MLflow evaluate harness types and sampling.
+"""Shared Opik evaluate harness types and sampling.
 
 Layer: Infrastructure (evaluation harness).
 
@@ -18,19 +18,19 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from mlflow.genai.scorers import Scorer
+    from opik.evaluation.metrics import BaseMetric
 
 EVAL_SEED: int = 1
 
 
 @dataclass(frozen=True)
 class EvalModule:
-    """One named ``mlflow.genai.evaluate`` configuration."""
+    """One named Opik ``evaluate`` configuration."""
 
     name: str
     load_data: Callable[[], list[dict[str, Any]]]
-    build_predict_fn: Callable[[], Callable[..., Any]]
-    build_scorers: Callable[[], Sequence[Scorer]]
+    build_task: Callable[[], Callable[[dict[str, Any]], dict[str, Any]]]
+    build_scorers: Callable[[], Sequence[BaseMetric]]
     sample_limit: int | None = None
 
 

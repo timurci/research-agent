@@ -5,14 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from pydantic import HttpUrl
 
 from evals.search.agents import search_agent
 from evals.search.modules import (
     MODULE_NAMES,
     SEARCH_SAMPLE_LIMIT,
-    as_query_predict_fn,
+    as_query_task,
     build_modules,
     query_module,
 )
@@ -43,7 +42,7 @@ def test_build_modules_names_and_factories() -> None:
     for name, module in modules.items():
         assert module.name == name
         assert callable(module.load_data)
-        assert callable(module.build_predict_fn)
+        assert callable(module.build_task)
         assert callable(module.build_scorers)
 
 
@@ -67,7 +66,7 @@ def test_build_modules_injects_lm_configs() -> None:
         search_factory.return_value = object()
         scorers_factory.return_value = ()
 
-        modules["search-search"].build_predict_fn()
+        modules["search-search"].build_task()
         modules["search-search"].build_scorers()
 
     search_factory.assert_called_once_with(
@@ -91,7 +90,7 @@ def test_build_modules_forwards_search_instructions() -> None:
         search_factory.return_value = object()
         scorers_factory.return_value = ()
 
-        modules["search-search"].build_predict_fn()
+        modules["search-search"].build_task()
         modules["search-search"].build_scorers()
 
     search_factory.assert_called_once_with(
@@ -104,12 +103,11 @@ def test_build_modules_forwards_search_instructions() -> None:
 def test_query_module_binds_name() -> None:
     module = query_module("custom", lambda: search_agent(lm_config=_SEARCH))
     assert module.name == "custom"
-    assert callable(module.build_predict_fn)
+    assert callable(module.build_task)
     assert module.build_scorers is search_query_scorers
 
 
-@pytest.mark.asyncio
-async def test_as_query_predict_fn_accepts_model_and_mapping() -> None:
+def test_as_query_task_accepts_dataset_item() -> None:
     paper = PaperInfo(
         title="Alpha Paper On Quantum Computing Advances",
         abstract=_ABSTRACT,
@@ -123,11 +121,15 @@ async def test_as_query_predict_fn_accepts_model_and_mapping() -> None:
         received.append(query)
         return [paper]
 
-    predict_fn = as_query_predict_fn("test-predict", stub_agent)
+    task = as_query_task(stub_agent)
     query = ResearchQuery(text="quantum error correction codes")
 
-    assert await predict_fn(query) == [paper]
-    assert await predict_fn({"text": "quantum error correction codes"}) == [paper]
+    result = task({"query": query})
+    assert result == {"papers": [paper]}
+    assert received == [query]
+
+    result2 = task({"query": {"text": "quantum error correction codes"}})
+    assert result2 == {"papers": [paper]}
     assert received == [
         query,
         ResearchQuery(text="quantum error correction codes"),

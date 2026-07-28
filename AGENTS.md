@@ -8,16 +8,12 @@ A research assistant for scientific literature discovery. The current capability
 
 ## Tech stack
 
-- Python ≥ 3.14
-- `pydantic` — domain models and invariants
-- `dspy` — LLM infrastructure (signatures, programs, optimizers, LiteLLM embeddings)
-- `mlflow` — AI evaluation (code-based scorers); dev dependency
-- `biopython`, `habanero` — search-index clients
-- `uv` — package manager, runner, build backend
-- `ruff` — lint + format
-- `ty` — type checker
-- `pytest` + `pytest-cov` + `pytest-asyncio` — tests; 85% coverage on `src/research_agent`
-- `prek` — git hooks
+- package management: uv
+- quality gates: prek, ruff, ty, pytest
+- AI evaluation: opik
+- prompt optimization: dspy
+- inference: dspy, litellm
+- literature search tools: biopython, habanero
 
 ## Environment setup
 
@@ -57,7 +53,7 @@ src/research_agent/          runtime; imports slices, wires workflows
   search/                    search slice (models, metrics, tools, agents, workflows)
 src/datagen/                 synthetic query generation (NOT runtime)
 src/optimize/                DSPy GEPA optimization harness (NOT runtime)
-src/evals/                   MLflow scorers + eval agent wiring (NOT runtime)
+src/evals/                   Opik scorers + eval agent wiring (NOT runtime)
 tests/unit/                  deterministic tests (mirror package layout)
 tests/external/              live tests (`live` marker; skipped by default)
 data/                        generated artifacts (output/ gitignored except .gitkeep)
@@ -67,7 +63,7 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 ## Architecture rules
 
-- **Domain** — pure; owns meaning, invariants, ports, quality metrics. No DSPy/MLflow/LLM clients.
+- **Domain** — pure; owns meaning, invariants, ports, quality metrics. No DSPy/Opik/LLM clients.
 - **Application** — orchestrates; calls ports, never adapters. No business logic.
 - **Infrastructure** — implements ports (DSPy, tools, clients). No use-case orchestration.
 - No Domain or Application module imports Infrastructure. No DSPy, prompts, model names, or LLM clients in Domain/Application.
@@ -94,7 +90,7 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 - `src/datagen` — synthetic queries → `data/datagen/output/queries_train.jsonl` via `uv run generate-queries`.
 - `src/optimize` — DSPy GEPA optimization harness, currently optimizes the **search agent only** (not reranker, not e2e).
-- `src/evals` — MLflow scorer adapters + eval agent factories; run suites with `uv run -m evals.main --list` / `uv run -m evals.main --experiment NAME search-search`.
+- `src/evals` — Opik scoring metrics + eval agent factories; run suites with `make eval ARGS="--experiment NAME search-search"` or `make eval-list`.
 - LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.config.lm` (Infrastructure). Roles `search-search`, `search-rerank`, and `search-suggest` are `LMConfig` field maps.
 - Optimized instructions: copy `config/instructions.example.yaml` → `config/instructions.yaml` (gitignored). Loader is `research_agent.shared.config.instructions` (Infrastructure). Maps module names (e.g. `search-search`) to saved DSPy program paths.
 - Do not commit under `data/**/output/` except `.gitkeep`.
@@ -102,9 +98,9 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 ## What NOT to do
 
 - Do not import `datagen`, `optimize`, or `evals` from `research_agent`.
-- Do not import DSPy, LiteLLM, MLflow, or other LLM libraries into Domain or Application.
+- Do not import DSPy, LiteLLM, Opik, or other LLM libraries into Domain or Application.
 - Do not import between slices.
-- Do not reimplement domain metric logic in MLflow scorers or GEPA metrics (adapt I/O only; map `EvaluationScore` → MLflow `Feedback` or GEPA `ScoreWithFeedback`).
+- Do not reimplement domain metric logic in MLflow scorers or GEPA metrics (adapt I/O only; map `EvaluationScore` → Opik `ScoreResult` or GEPA `ScoreWithFeedback`).
 - Do not bound `Agent` type variables to `BaseModel`.
 - Do not re-validate structure Pydantic already enforces.
 - Do not duplicate a definition's behavior, lifecycle, or invariants in another module's docstring or comments. The call site documents only what is local to *its* composition.

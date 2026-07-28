@@ -1,7 +1,7 @@
 """Search-suite evaluation dataset loader.
 
 Loads the Hugging Face ``tcakmako/research_queries`` **test** split and
-maps rows to domain ``ResearchQuery`` values for query-only MLflow
+maps rows to domain ``ResearchQuery`` values for query-only Opik
 evaluation. No gold papers or relevance labels are present.
 """
 
@@ -62,20 +62,18 @@ def load_search_eval_data(
     path: str = SEARCH_HF_PATH,
     split: str = SEARCH_SPLIT,
 ) -> list[dict[str, object]]:
-    """Load MLflow ``evaluate`` rows for the search suite.
+    """Load Opik ``evaluate`` rows for the search suite.
 
     Each row is query-only::
 
-        {"inputs": {"query": ResearchQuery(...)}}
+        {"query": ResearchQuery(...)}
 
     Args:
         path: Hugging Face dataset path.
         split: Dataset split name (default ``test``).
 
     Returns:
-        Rows suitable for ``mlflow.genai.evaluate(data=...)``.
+        Rows suitable for ``opik.evaluate(dataset=...)``.
     """
-    return [
-        {"inputs": {"query": query}}
-        for query in load_search_queries(path=path, split=split)
-    ]
+    queries = load_search_queries(path=path, split=split)
+    return [{"query": q.model_dump()} for q in queries]

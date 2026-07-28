@@ -105,6 +105,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _dataset_name(module: EvalModule, *, seed: int) -> str:
+    """Build a stable dataset name from module config.
+
+    Seed is included so different seeds get different datasets. A
+    non-None sample limit is included as a suffix so capped and
+    uncapped runs use distinct datasets.
+    """
+    name = f"eval-{module.name}-s{seed}"
+    if module.sample_limit is not None:
+        name += f"-l{module.sample_limit}"
+    return name
+
+
 def _run_module(  # noqa: PLR0913  # orchestration function with distinct config args
     module: EvalModule,
     *,
@@ -146,9 +159,23 @@ def _run_module(  # noqa: PLR0913  # orchestration function with distinct config
         experiment_config["search.instructions.sha256"] = file_sha256(instruction_path)
 
     client = opik.Opik()
-    dataset = client.get_or_create_dataset(name=f"eval-{module.name}")
-    dataset.clear()
-    dataset.insert(data)
+    dataset_name = _dataset_name(module, seed=seed)
+    dataset = client.get_or_create_dataset(name=dataset_name)
+    if not dataset.dataset_items_count:
+        dataset.insert(data)
+        logger.info(
+            "[%s] populated dataset %r with %d rows",
+            module.name,
+            dataset_name,
+            len(data),
+        )
+    else:
+        logger.info(
+            "[%s] reusing existing dataset %r (%d items)",
+            module.name,
+            dataset_name,
+            dataset.dataset_items_count,
+        )
 
     result = opik.evaluate(
         dataset=dataset,

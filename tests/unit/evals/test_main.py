@@ -45,7 +45,10 @@ def _mock_opik_evaluate(opik_mod: MagicMock) -> None:
     mock_result.experiment_name = "cli-exp"
     mock_result.experiment_url = "http://localhost/test"
     opik_mod.evaluate.return_value = mock_result
-    opik_mod.Opik.return_value.get_or_create_dataset.return_value = MagicMock()
+    mock_dataset = MagicMock()
+    mock_dataset.dataset_items_count = 0
+    mock_dataset.name = "eval-search-search-s1"
+    opik_mod.Opik.return_value.get_or_create_dataset.return_value = mock_dataset
 
 
 def test_module_names_has_search_suite() -> None:

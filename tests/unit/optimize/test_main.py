@@ -55,9 +55,33 @@ def test_main_requires_modules() -> None:
         main([])
 
 
-def test_parser_auto_defaults_to_light() -> None:
+def test_parser_budget_defaults_to_light() -> None:
     args = _build_parser().parse_args(["--list"])
-    assert args.auto == "light"
+    assert args.budget == "light"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("light", "light"),
+        ("medium", "medium"),
+        ("heavy", "heavy"),
+        ("1", 1),
+        ("20", 20),
+    ],
+)
+def test_parser_budget_accepts_presets_and_positive_ints(
+    value: str,
+    expected: str | int,
+) -> None:
+    args = _build_parser().parse_args(["--budget", value, "--list"])
+    assert args.budget == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "turbo", "1.5"])
+def test_parser_budget_rejects_invalid_values(value: str) -> None:
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["--budget", value, "--list"])
 
 
 def test_main_runs_gepa_and_saves_program(tmp_path: Path) -> None:
@@ -84,6 +108,7 @@ def test_main_runs_gepa_and_saves_program(tmp_path: Path) -> None:
 
     gepa_cls.assert_called_once()
     assert gepa_cls.call_args.kwargs["auto"] == "light"
+    assert gepa_cls.call_args.kwargs["max_full_evals"] is None
     assert gepa_cls.call_args.kwargs["track_stats"] is True
     assert gepa_cls.call_args.kwargs["log_dir"] == str(tmp_path / "search-search")
     assert gepa_cls.call_args.kwargs["seed"] == 0
@@ -94,7 +119,7 @@ def test_main_runs_gepa_and_saves_program(tmp_path: Path) -> None:
     optimized.save.assert_called_once_with(str(tmp_path / "search-search.json"))
 
 
-def test_main_auto_flag_selects_gepa_preset(tmp_path: Path) -> None:
+def test_main_budget_flag_selects_gepa_preset(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
     module = _fake_module()
     optimized = MagicMock()
@@ -113,12 +138,41 @@ def test_main_auto_flag_selects_gepa_preset(tmp_path: Path) -> None:
                 str(config_path),
                 "--out-dir",
                 str(tmp_path),
-                "--auto",
+                "--budget",
                 "heavy",
             ],
         )
 
     assert gepa_cls.call_args.kwargs["auto"] == "heavy"
+    assert gepa_cls.call_args.kwargs["max_full_evals"] is None
+
+
+def test_main_budget_integer_sets_max_full_evals(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    module = _fake_module()
+    optimized = MagicMock()
+    optimized.detailed_results = None
+    gepa = MagicMock()
+    gepa.compile.return_value = optimized
+
+    with (
+        patch("optimize.main.build_modules", return_value={"search-search": module}),
+        patch("optimize.main.dspy.GEPA", return_value=gepa) as gepa_cls,
+    ):
+        main(
+            [
+                "search-search",
+                "--config",
+                str(config_path),
+                "--out-dir",
+                str(tmp_path),
+                "--budget",
+                "20",
+            ],
+        )
+
+    assert gepa_cls.call_args.kwargs["auto"] is None
+    assert gepa_cls.call_args.kwargs["max_full_evals"] == 20
 
 
 def _module_with_pool_size(pool_size: int) -> OptimizeModule:

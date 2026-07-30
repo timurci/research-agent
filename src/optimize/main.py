@@ -4,7 +4,8 @@ Usage::
 
     uv run -m optimize.main --list
     uv run -m optimize.main --config config/lm.yaml search-search
-    uv run -m optimize.main --limit 5 --auto medium search-search
+    uv run -m optimize.main --limit 5 --budget medium search-search
+    uv run -m optimize.main --budget 20 search-search
 
 Optimizes one student step at a time (currently: search agent only).
 Does not optimize the reranker or the search→rerank e2e workflow.
@@ -55,12 +56,13 @@ if TYPE_CHECKING:
 
     from optimize.search.modules import OptimizeModule
 
-type GepaAuto = Literal["light", "medium", "heavy"]
+type GepaBudgetPreset = Literal["light", "medium", "heavy"]
+type GepaBudget = GepaBudgetPreset | int
 
 DEFAULT_SEED: int = 0
 DEFAULT_OUT_DIR: Path = Path("data/optimize/output")
-DEFAULT_GEPA_AUTO: GepaAuto = "light"
-GEPA_AUTO_PRESETS: tuple[GepaAuto, ...] = ("light", "medium", "heavy")
+DEFAULT_GEPA_BUDGET: GepaBudgetPreset = "light"
+GEPA_BUDGET_PRESETS: tuple[GepaBudgetPreset, ...] = ("light", "medium", "heavy")
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,26 @@ class _RunOptions:
     limit: int | None
     out_dir: Path
     teacher_lm: dspy.LM
-    auto: GepaAuto
+    budget: GepaBudget
+
+
+def _parse_budget(value: str) -> GepaBudget:
+    """Parse a GEPA budget preset name or a positive integer eval count."""
+    for preset in GEPA_BUDGET_PRESETS:
+        if value == preset:
+            return preset
+    try:
+        count = int(value)
+    except ValueError:
+        presets = ", ".join(GEPA_BUDGET_PRESETS)
+        msg = (
+            f"budget must be one of {{{presets}}} or a positive integer, got {value!r}"
+        )
+        raise argparse.ArgumentTypeError(msg) from None
+    if count < 1:
+        msg = f"budget integer must be >= 1, got {count}"
+        raise argparse.ArgumentTypeError(msg)
+    return count
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -120,10 +141,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Directory for compiled programs (default: {DEFAULT_OUT_DIR}).",
     )
     parser.add_argument(
-        "--auto",
-        choices=sorted(GEPA_AUTO_PRESETS),
-        default=DEFAULT_GEPA_AUTO,
-        help=f"GEPA budget preset (default: {DEFAULT_GEPA_AUTO}).",
+        "--budget",
+        type=_parse_budget,
+        default=DEFAULT_GEPA_BUDGET,
+        help=(
+            "GEPA optimization budget: preset light|medium|heavy (maps to "
+            f"dspy.GEPA auto=) or a positive integer (maps to max_full_evals=; "
+            f"default: {DEFAULT_GEPA_BUDGET})."
+        ),
     )
     return parser
 
@@ -162,16 +187,23 @@ def _run_module(module: OptimizeModule, options: _RunOptions) -> None:
     )
 
     student = module.build_student()
+    if isinstance(options.budget, int):
+        auto = None
+        max_full_evals: int | None = options.budget
+    else:
+        auto = options.budget
+        max_full_evals = None
     optimizer = dspy.GEPA(
         metric=module.metric,
-        auto=options.auto,
+        auto=auto,
+        max_full_evals=max_full_evals,
         add_format_failure_as_feedback=True,
         reflection_lm=options.teacher_lm,
         log_dir=str(options.out_dir / module.name),
         track_stats=True,
         seed=options.seed,
     )
-    logger.info("[%s] compiling with GEPA (auto=%s)", module.name, options.auto)
+    logger.info("[%s] compiling with GEPA (budget=%s)", module.name, options.budget)
     optimized = optimizer.compile(student, trainset=trainset, valset=valset)
 
     options.out_dir.mkdir(parents=True, exist_ok=True)
@@ -219,7 +251,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         limit=args.limit,
         out_dir=args.out_dir,
         teacher_lm=teacher_lm,
-        auto=args.auto,
+        budget=args.budget,
     )
 
     for name in args.modules:

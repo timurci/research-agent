@@ -37,7 +37,7 @@ optimize/
 `OptimizeModule`. At a high level it:
 
 1. Parses CLI arguments (`--config`, `--limit`, `--seed`, `--out-dir`,
-   `--auto`, module names, or `--list`).
+   `--budget`, module names, or `--list`).
 2. Loads LM configurations from `config/lm.yaml` for the student,
    the metric labeler, and the GEPA reflection teacher.
 3. Builds the requested modules via `build_modules(...)`, injecting the
@@ -67,7 +67,8 @@ student during optimization.
 ```bash
 uv run -m optimize.main --list
 uv run -m optimize.main --config config/lm.yaml search-search
-uv run -m optimize.main --config config/lm.yaml --limit 5 --auto light search-search
+uv run -m optimize.main --config config/lm.yaml --limit 5 --budget light search-search
+uv run -m optimize.main --config config/lm.yaml --budget 20 search-search
 ```
 
 Requires `config/lm.yaml` roles: `search-search` (student), `search-rerank`

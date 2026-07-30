@@ -16,7 +16,7 @@ metrics that adapt domain quality functions, and compiles the student
 program (``optimize.search.agents.SearchProgram``) with ``dspy.GEPA``.
 Live index calls (PubMed, CrossRef, OpenAlex) happen inside the search
 student during optimization. The ``search-rerank`` role is used only
-for relevance labeling in metrics; ``optimize-teacher`` is the GEPA
+for relevance labeling in metrics; ``gepa-reflection`` is the GEPA
 reflection LM.
 """
 
@@ -39,7 +39,7 @@ from optimize.search.modules import (
 )
 from research_agent.shared.config.lm import (
     DEFAULT_LM_CONFIG_PATH,
-    ROLE_OPTIMIZE_TEACHER,
+    ROLE_GEPA_REFLECTION,
     ROLE_SEARCH_RERANK,
     ROLE_SEARCH_SEARCH,
     lm_config,
@@ -91,7 +91,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_LM_CONFIG_PATH,
         help=(
             "YAML LM config path: search-search (student), search-rerank "
-            "(metric labeler only), and optimize-teacher (GEPA reflection; "
+            "(metric labeler only), and gepa-reflection (GEPA reflection; "
             f"default: {DEFAULT_LM_CONFIG_PATH})."
         ),
     )
@@ -209,7 +209,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     search_cfg = lm_config(ROLE_SEARCH_SEARCH, path=args.config)
     labeler_cfg = lm_config(ROLE_SEARCH_RERANK, path=args.config)
-    teacher_lm = dspy_lm(lm_config(ROLE_OPTIMIZE_TEACHER, path=args.config))
+    teacher_lm = dspy_lm(lm_config(ROLE_GEPA_REFLECTION, path=args.config))
     modules = build_modules(
         search_lm_config=search_cfg,
         labeler_lm_config=labeler_cfg,

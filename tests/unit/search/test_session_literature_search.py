@@ -9,7 +9,7 @@ from pydantic import HttpUrl
 
 from research_agent.search.models import PaperInfo, SearchIndex
 from research_agent.search.tools import (
-    _RERANK_MAX_ABSTRACT_CHARS,
+    _SEARCH_MAX_ABSTRACT_CHARS,
     SEARCH_RESULTS_KEY,
     LiteratureSearch,
     SessionLiteratureSearch,
@@ -143,10 +143,10 @@ async def test_card_abstract_truncated_but_bag_keeps_full_abstract() -> None:
     assert cards == [
         {
             "title": paper.title,
-            "abstract": long_abstract[:_RERANK_MAX_ABSTRACT_CHARS],
+            "abstract": long_abstract[:_SEARCH_MAX_ABSTRACT_CHARS],
         }
     ]
-    assert len(cards[0]["abstract"]) == _RERANK_MAX_ABSTRACT_CHARS
+    assert len(cards[0]["abstract"]) == _SEARCH_MAX_ABSTRACT_CHARS
     bag = SessionLiteratureSearch.papers(session)
     assert len(bag) == 1
     stored = next(iter(bag))

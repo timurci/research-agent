@@ -14,15 +14,13 @@ from research_agent.shared.metric import EvaluationScore
 if TYPE_CHECKING:
     from research_agent.search.models import PaperInfo
 
-HIGH_RELEVANCE_THRESHOLD = 0.9
-MEDIUM_RELEVANCE_THRESHOLD = 0.5
+LOW_RELEVANCE_THRESHOLD = 0.9
 HIGH_RELEVANCE_SCORE = 1.0
-MEDIUM_RELEVANCE_SCORE = 0.5
+MAX_LOW_RELEVANCE_FRACTION = 0.05
 NDCG_AT_K = 10
-TARGET_RESULT_COUNT = 50
-MIN_PASS_RESULT_COUNT = 15
-SCORE_AT_TARGET = 0.95
-OVERSHOOT_HALF_CREDIT = 50
+MIN_RESULT_COUNT = 10
+PEAK_RESULT_COUNT = 30
+MAX_RESULT_COUNT = 100
 MIN_RELEVANCE_GRADE = 0
 MAX_RELEVANCE_GRADE = 3
 SUGGESTION_MIN_WORDS = 150
@@ -40,7 +38,12 @@ class RelevanceMetric(BaseModel):
 def search_result_relevance(
     search_results: list[PaperInfo], relevance_scores: list[RelevanceMetric]
 ) -> EvaluationScore:
-    """Determines if a paper is relevant to the research topic.
+    """Score whether search results are relevant to the research topic.
+
+    Each label is high when ``value >= LOW_RELEVANCE_THRESHOLD`` and low
+    otherwise. The continuous score is the fraction of high-relevance
+    papers. ``passing`` is false when the low-relevance fraction exceeds
+    ``MAX_LOW_RELEVANCE_FRACTION``.
 
     Args:
         search_results: A list of search results.
@@ -63,28 +66,24 @@ def search_result_relevance(
     cumulative_metric_score = 0.0
 
     for i, score in enumerate(relevance_scores):
-        if score.value >= HIGH_RELEVANCE_THRESHOLD:
+        if score.value < LOW_RELEVANCE_THRESHOLD:
+            counter["LOW"] += 1
+            low_relevance_items.append(i)
+        else:
             counter["HIGH"] += 1
             cumulative_metric_score += HIGH_RELEVANCE_SCORE
             high_relevance_items.append(i)
-        elif score.value >= MEDIUM_RELEVANCE_THRESHOLD:
-            counter["MEDIUM"] += 1
-            cumulative_metric_score += MEDIUM_RELEVANCE_SCORE
-        else:
-            counter["LOW"] += 1
-            low_relevance_items.append(i)
 
-    metric_score = cumulative_metric_score / len(relevance_scores)
+    total = len(relevance_scores)
+    metric_score = cumulative_metric_score / total
+    low_fraction = counter["LOW"] / total
 
-    if counter["LOW"] > len(relevance_scores) * 0.5:
+    if low_fraction > MAX_LOW_RELEVANCE_FRACTION:
         passing = False
         verdict = "Too many low relevance results."
-    elif counter["HIGH"] > len(relevance_scores) * 0.5:
-        passing = True
-        verdict = "Results are mostly high relevance."
     else:
         passing = True
-        verdict = "Results are within acceptable bounds."
+        verdict = "Results meet the relevance threshold."
 
     low_relevance_titles = [search_results[i].title for i in low_relevance_items]
     high_relevance_titles = [search_results[i].title for i in high_relevance_items]
@@ -101,41 +100,31 @@ def search_result_relevance(
 def _volume_score(count: int) -> float:
     """Map result count to a float in ``[0, 1]`` for optimizers.
 
-    Linear from 0 to ``SCORE_AT_TARGET`` over ``[0, TARGET_RESULT_COUNT]``,
-    then a concave residual ``1 - SCORE_AT_TARGET`` for larger counts so
-    volume past the target is only weakly rewarded (relevance remains the
-    stronger co-objective).
+    Tent map over ``[MIN_RESULT_COUNT, MAX_RESULT_COUNT]`` peaking at
+    ``PEAK_RESULT_COUNT``:
+
+    - Linear rise from 0 at the minimum to 1.0 at the peak.
+    - Linear fall from 1.0 at the peak to 0 at the maximum.
+    - 0.0 outside the pass band.
     """
-    if count <= 0:
+    if count < MIN_RESULT_COUNT or count > MAX_RESULT_COUNT:
         return 0.0
-    if count <= TARGET_RESULT_COUNT:
-        return SCORE_AT_TARGET * (count / TARGET_RESULT_COUNT)
-    overshoot = count - TARGET_RESULT_COUNT
-    residual = 1.0 - SCORE_AT_TARGET
-    return SCORE_AT_TARGET + residual * (
-        overshoot / (overshoot + OVERSHOOT_HALF_CREDIT)
-    )
+    if count <= PEAK_RESULT_COUNT:
+        return (count - MIN_RESULT_COUNT) / (PEAK_RESULT_COUNT - MIN_RESULT_COUNT)
+    return (MAX_RESULT_COUNT - count) / (MAX_RESULT_COUNT - PEAK_RESULT_COUNT)
 
 
 def search_result_count(search_results: list[PaperInfo]) -> EvaluationScore:
-    """Scores the volume of search results.
+    """Score search result volume with a peak-preferring tent map.
 
-    Relevance alone can be gamed by returning a single highly relevant
-    paper. This metric rewards longer result lists using the integer
-    count ``n = len(search_results)``:
+    Uses the integer count ``n = len(search_results)``:
 
-    - Linear segment: for ``n <= TARGET_RESULT_COUNT``,
-      ``score = SCORE_AT_TARGET * n / TARGET_RESULT_COUNT``
-      (reaches ``SCORE_AT_TARGET`` at the target, not 1.0).
-    - Concave tail: for ``n > TARGET_RESULT_COUNT``, the residual
-      ``1 - SCORE_AT_TARGET`` is allocated with diminishing returns
-      ``u / (u + OVERSHOOT_HALF_CREDIT)`` where ``u = n - target``.
-      Extra papers past the target are weakly rewarded so optimizers
-      prefer improving relevance over unbounded volume.
-    - ``passing`` is true when ``n >= MIN_PASS_RESULT_COUNT`` (eval
-      gate / suite pass rate). The pass floor is coarser than the
-      continuous score so AI evals and optimization use different
-      resolutions of the same count.
+    - ``passing`` is true when
+      ``MIN_RESULT_COUNT <= n <= MAX_RESULT_COUNT``.
+    - Continuous ``score`` rises linearly from 0 at
+      ``MIN_RESULT_COUNT`` to 1.0 at ``PEAK_RESULT_COUNT``, then falls
+      linearly to 0 at ``MAX_RESULT_COUNT``. Outside the band the score
+      is 0.0.
 
     Pair with ``search_result_relevance`` so optimizers cannot trade
     volume for junk: volume and relevance are separate criteria.
@@ -146,27 +135,35 @@ def search_result_count(search_results: list[PaperInfo]) -> EvaluationScore:
         search_results: Papers returned by the search agent or workflow.
 
     Returns:
-        Evaluation score whose continuous value is the volume map and
-        whose pass/fail reflects the minimum volume floor.
+        Evaluation score whose continuous value is the tent map and
+        whose pass/fail reflects the hard count band.
     """
     count = len(search_results)
     score = _volume_score(count)
-    passing = count >= MIN_PASS_RESULT_COUNT
-    if count >= TARGET_RESULT_COUNT:
+    passing = MIN_RESULT_COUNT <= count <= MAX_RESULT_COUNT
+    if count < MIN_RESULT_COUNT:
         reason = (
-            f"Returned {count} results "
-            f"(target {TARGET_RESULT_COUNT} met, pass floor {MIN_PASS_RESULT_COUNT})."
+            f"Returned {count} results; "
+            f"need at least {MIN_RESULT_COUNT} to pass "
+            f"(peak {PEAK_RESULT_COUNT}, max {MAX_RESULT_COUNT})."
         )
-    elif passing:
+    elif count > MAX_RESULT_COUNT:
+        reason = (
+            f"Returned {count} results; "
+            f"need at most {MAX_RESULT_COUNT} to pass "
+            f"(min {MIN_RESULT_COUNT}, peak {PEAK_RESULT_COUNT})."
+        )
+    elif count == PEAK_RESULT_COUNT:
         reason = (
             f"Returned {count} results "
-            f"(target {TARGET_RESULT_COUNT}, pass floor {MIN_PASS_RESULT_COUNT})."
+            f"(peak {PEAK_RESULT_COUNT} met, "
+            f"band [{MIN_RESULT_COUNT}, {MAX_RESULT_COUNT}])."
         )
     else:
         reason = (
-            f"Returned {count} results; "
-            f"need at least {MIN_PASS_RESULT_COUNT} to pass "
-            f"(target {TARGET_RESULT_COUNT})."
+            f"Returned {count} results "
+            f"(peak {PEAK_RESULT_COUNT}, "
+            f"band [{MIN_RESULT_COUNT}, {MAX_RESULT_COUNT}])."
         )
     return EvaluationScore(passing=passing, reason=reason, score=score)
 

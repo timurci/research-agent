@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 _MAX_LIMIT: int = 100
 _MIN_LIMIT: int = 1
 _OPENALEX_MAX_PER_PAGE: int = 100
-_RERANK_MAX_ABSTRACT_CHARS: int = 2048
+_SEARCH_MAX_ABSTRACT_CHARS: int = 1024
 
 _DEFAULT_MAILTO: str = "research-agent@example.com"
 _STRIP_JATS = re.compile(r"<[^>]+>")
@@ -611,7 +611,7 @@ class _IndexSearch(Protocol):
 class PaperCard(TypedDict):
     """Slim paper observation for the search ReAct trajectory.
 
-    Abstract is truncated to ``_RERANK_MAX_ABSTRACT_CHARS`` to keep the
+    Abstract is truncated to ``_SEARCH_MAX_ABSTRACT_CHARS`` to keep the
     trajectory within the LM context window.
     """
 
@@ -691,7 +691,7 @@ class SessionLiteratureSearch:
         return [
             PaperCard(
                 title=paper.title,
-                abstract=paper.abstract[:_RERANK_MAX_ABSTRACT_CHARS],
+                abstract=paper.abstract[:_SEARCH_MAX_ABSTRACT_CHARS],
             )
             for paper in added
         ]

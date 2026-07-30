@@ -1,15 +1,14 @@
-"""DSPy/GEPA metric adapter for search-agent optimization.
+"""DSPy/GEPA metric adapters for search-slice optimization.
 
 Layer: Infrastructure (optimization harness).
 
-GEPA accepts a single metric. ``search_query_metric`` is that entrypoint:
-it runs the domain search quality functions (count and relevance),
-averages their continuous scores, and concatenates feedback for
-reflection.
+GEPA accepts a single metric per student:
+
+* ``search_query_metric`` — count + relevance (held-out ``search-rerank``)
+* ``search_suggest_metric`` — length + quality (held-out ``llm-judge``)
 
 Domain metric logic is not reimplemented here. Adapters map domain
-``EvaluationScore`` to GEPA ``ScoreWithFeedback``. Relevance labels come
-from a held-out labeler (``search-rerank``), not from the student.
+``EvaluationScore`` to GEPA ``ScoreWithFeedback``.
 """
 
 from __future__ import annotations
@@ -26,15 +25,22 @@ from research_agent.search.metrics import (
     RelevanceMetric,
     search_result_count,
     search_result_relevance,
+    suggestion_length,
+    suggestion_quality,
 )
 from research_agent.search.models import PaperInfo, ResearchQuery
+from research_agent.search.rubrics import SUGGESTION_QUALITY_RUBRIC
+from research_agent.shared.config.lm import ROLE_LLM_JUDGE
+from research_agent.shared.config.lm import lm_config as load_lm_config
+from research_agent.shared.judge import RubricJudge
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping, Sequence
 
     from research_agent.shared.config.models import LMConfig
+    from research_agent.shared.judge import JudgeVerdict
 
-__all__ = ["MetricShapeError", "search_query_metric"]
+__all__ = ["MetricShapeError", "search_query_metric", "search_suggest_metric"]
 
 
 class MetricShapeError(Exception):
@@ -52,7 +58,22 @@ class _RelevanceLabeler(Protocol):
         ...
 
 
+class _QualityJudge(Protocol):
+    """Async provider of suggestion-quality verdicts."""
+
+    async def judge(
+        self,
+        *,
+        task_input: str,
+        task_output: str,
+        task_context: str = "",
+    ) -> JudgeVerdict:
+        """Score free-text output against a bound rubric."""
+        ...
+
+
 _PAPER_LIST_ADAPTER: TypeAdapter[list[PaperInfo]] = TypeAdapter(list[PaperInfo])
+_JUDGE_ABSTRACT_CHARS: int = 500
 
 
 def _require_paper_list(raw: object) -> list[PaperInfo]:
@@ -188,6 +209,119 @@ def search_query_metric(
 
         combined_score = (count.score + rel.score) / 2
         feedback = f"{count.feedback}\n{rel.feedback}"
+        return ScoreWithFeedback(score=combined_score, feedback=feedback)
+
+    return metric
+
+
+def _format_suggestion_judge_input(query: ResearchQuery) -> str:
+    """Format a research query as judge task input text."""
+    if query.domains:
+        domains = ", ".join(query.domains)
+        return f"Query: {query.text}\nDomains: {domains}"
+    return f"Query: {query.text}"
+
+
+def _format_suggestion_judge_context(papers: list[PaperInfo]) -> str:
+    """Format paper titles and abstract snippets as judge context."""
+    if not papers:
+        return "(no papers provided)"
+    blocks: list[str] = []
+    for index, paper in enumerate(papers, start=1):
+        abstract = paper.abstract[:_JUDGE_ABSTRACT_CHARS]
+        blocks.append(
+            f"[{index}] Title: {paper.title}\nAbstract: {abstract}",
+        )
+    return "\n\n".join(blocks)
+
+
+def _papers_from_example(example: object) -> list[PaperInfo]:
+    """Extract paper inputs from a DSPy gold example."""
+    payload: object
+    match example:
+        case {"papers": papers}:
+            payload = papers
+        case _ if hasattr(example, "papers"):
+            payload = example.papers
+        case _:
+            msg = "example must carry a 'papers' attribute or mapping key"
+            raise MetricShapeError(msg)
+    try:
+        return _PAPER_LIST_ADAPTER.validate_python(payload)
+    except ValidationError as exc:
+        msg = f"example.papers must be list[PaperInfo]: {exc}"
+        raise MetricShapeError(msg) from exc
+
+
+def _suggestion_from_pred(pred: object) -> str:
+    """Extract suggestion text from a DSPy prediction."""
+    if not hasattr(pred, "suggestion"):
+        msg = "prediction must expose a 'suggestion' attribute"
+        raise MetricShapeError(msg)
+    suggestion = pred.suggestion
+    if not isinstance(suggestion, str):
+        msg = f"prediction.suggestion must be str, got {type(suggestion).__name__}"
+        raise MetricShapeError(msg)
+    return suggestion
+
+
+def search_suggest_metric(
+    *,
+    lm_config: LMConfig | None = None,
+    quality_judge: _QualityJudge | None = None,
+) -> Callable[..., ScoreWithFeedback]:
+    """GEPA metric for suggestion-generator optimization.
+
+    Averages continuous domain scores for length and quality, and
+    concatenates feedback strings for reflection. Quality uses a
+    held-out rubric judge (``llm-judge``), not the student.
+
+    Args:
+        lm_config: Judge LM settings when *quality_judge* is not provided.
+            Defaults to the ``llm-judge`` role from ``config/lm.yaml``.
+        quality_judge: Optional judge; overrides *lm_config*. Not the
+            optimization student.
+    """
+    active_judge: _QualityJudge
+    if quality_judge is not None:
+        active_judge = quality_judge
+    else:
+        config = lm_config if lm_config is not None else load_lm_config(ROLE_LLM_JUDGE)
+        active_judge = RubricJudge(config, SUGGESTION_QUALITY_RUBRIC)
+
+    def metric(
+        gold: Any,  # noqa: ANN401  # DSPy gold example is opaque
+        pred: Any,  # noqa: ANN401  # DSPy prediction is opaque
+        trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
+        pred_name: str | None = None,  # noqa: ARG001  # GEPA signature; unused
+        pred_trace: Any | None = None,  # noqa: ANN401, ARG001  # GEPA signature; unused
+    ) -> ScoreWithFeedback:
+        suggestion = _suggestion_from_pred(pred)
+        length = evaluation_score_to_score_with_feedback(
+            suggestion_length(suggestion),
+            name="suggestion_length",
+        )
+
+        query = _research_query_from_example(gold)
+        papers = _papers_from_example(gold)
+        verdict = _run_coroutine(
+            active_judge.judge(
+                task_input=_format_suggestion_judge_input(query),
+                task_output=suggestion,
+                task_context=_format_suggestion_judge_context(papers),
+            ),
+        )
+        quality = evaluation_score_to_score_with_feedback(
+            suggestion_quality(
+                score=verdict.score,
+                passing=not verdict.failing,
+                reason=verdict.reason,
+            ),
+            name="suggestion_quality",
+        )
+
+        combined_score = (length.score + quality.score) / 2
+        feedback = f"{length.feedback}\n{quality.feedback}"
         return ScoreWithFeedback(score=combined_score, feedback=feedback)
 
     return metric

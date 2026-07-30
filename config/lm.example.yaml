@@ -26,3 +26,9 @@ gepa-reflection:
   model: openai/Qwen3.5-4B
   api_key: ignored-auth-key
   base_url: http://localhost:8080/v1
+
+# Held-out LLM judge for subjective metrics (evals + optimize; all modules).
+llm-judge:
+  model: openai/Qwen3.5-4B
+  api_key: ignored-auth-key
+  base_url: http://localhost:8080/v1

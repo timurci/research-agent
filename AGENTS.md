@@ -95,10 +95,10 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 ## Tooling boundaries
 
 - `src/datagen` — synthetic queries → `data/datagen/output/queries_train.jsonl` via `uv run generate-queries`.
-- `src/optimize` — DSPy GEPA optimization harness, currently optimizes the **search agent only** (not reranker, not e2e).
-- `src/evals` — Opik scoring metrics + eval agent factories; run suites with `make eval ARGS="--experiment NAME search-search"` or `make eval-list`.
-- LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.config.lm` (Infrastructure). Roles `search-search`, `search-rerank`, and `search-suggest` are `LMConfig` field maps.
-- Optimized instructions: copy `config/instructions.example.yaml` → `config/instructions.yaml` (gitignored). Loader is `research_agent.shared.config.instructions` (Infrastructure). Maps module names (e.g. `search-search`) to saved DSPy program paths.
+- `src/optimize` — DSPy GEPA optimization harness for single-step students: **search-search** and **search-suggest** (not reranker, not e2e).
+- `src/evals` — Opik scoring metrics + eval agent factories; run suites with `make eval ARGS="--experiment NAME search-search"` / `search-suggest` or `make eval-list`.
+- LM endpoints: copy `config/lm.example.yaml` → `config/lm.yaml` (gitignored). Loader is `research_agent.shared.config.lm` (Infrastructure). Runtime roles: `search-search`, `search-rerank`, `search-suggest`. Tooling roles: `gepa-reflection`, `llm-judge` (held-out subjective metrics for all modules).
+- Optimized instructions: copy `config/instructions.example.yaml` → `config/instructions.yaml` (gitignored). Loader is `research_agent.shared.config.instructions` (Infrastructure). Maps module names (e.g. `search-search`, `search-suggest`) to saved DSPy program paths.
 - Runtime observability: Opik is a main dependency. Configure via `OPIK_URL_OVERRIDE` / `OPIK_API_KEY` / `OPIK_PROJECT_NAME` (same as evals). Helpers live in `research_agent.shared.observability`; composition root is `research_agent.app`.
 - Do not commit under `data/**/output/` except `.gitkeep`.
 
@@ -117,6 +117,6 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 - `uv run pytest` runs unit tests + coverage on `src/research_agent` only; live tests need `uv run pytest -m live`.
 - `ruff` uses `select = ["ALL"]`; do not add new backlog violations.
-- Optimize data is HF `tcakmako/research_queries` **train** only (sample 50, 80/20 → 40 train / 10 val for GEPA); evals uses **test**. Compiled artifacts go under `data/optimize/output/`.
-- Live optimize runs hit PubMed/CrossRef/OpenAlex inside the student and a relevance labeler LM in the metric — use `--limit` for smoke tests.
+- Optimize/eval data: `search-search` uses HF `tcakmako/research_queries` (train for optimize, test for evals). `search-suggest` loads a local Opik search-search I/O export at `data/optimize/input/eval-search-search-io.json` (`dataset.query` + `output.papers`; papers truncated to `SUGGESTION_TOP_N`). Default pool sample 50 with pool-size-aware train/val split. Compiled artifacts go under `data/optimize/output/`.
+- Live optimize for `search-search` hits PubMed/CrossRef/OpenAlex inside the student and a relevance labeler LM in the metric; `search-suggest` uses fixed papers from the export plus an `llm-judge` quality metric — use `--limit` for smoke tests.
 - CLI defaults in `datagen` must stay aligned with the `data/` layout.

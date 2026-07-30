@@ -10,9 +10,14 @@ import dspy
 import pytest
 from pydantic import HttpUrl
 
-from optimize.search.agents import SearchProgram, relevance_labeler, search_agent
+from optimize.search.agents import (
+    SearchProgram,
+    SuggestionProgram,
+    relevance_labeler,
+    search_agent,
+)
 from research_agent.search.agents import Reranker
-from research_agent.search.models import ResearchQuery
+from research_agent.search.models import PaperInfo, ResearchQuery
 from research_agent.shared.config.models import LMConfig
 
 _LOAD_LM_CONFIG = "optimize.search.agents.load_lm_config"
@@ -26,6 +31,17 @@ _RERANK_CONFIG = LMConfig(
     model="infinity/test-rerank",
     api_key="rerank-key",
     base_url=HttpUrl("http://rerank.example/v1"),
+)
+_SUGGEST_CONFIG = LMConfig(
+    model="openai/test-suggest",
+    api_key="suggest-key",
+    base_url=HttpUrl("http://suggest.example/v1"),
+)
+
+_ABSTRACT = (
+    "A sufficiently long abstract describing the research methodology, "
+    "experimental setup, results, and conclusions of this work in detail "
+    "to satisfy the PaperInfo min_length=200 invariant enforced by Pydantic."
 )
 
 
@@ -43,6 +59,34 @@ def test_search_program_is_dspy_module_with_react() -> None:
     names = [name for name, _ in program.named_predictors()]
     assert names
     assert any(name.startswith("react") for name in names)
+
+
+def test_suggestion_program_is_dspy_module_with_predict() -> None:
+    program = SuggestionProgram(lm_config=_SUGGEST_CONFIG)
+    assert isinstance(program, dspy.Module)
+    names = [name for name, _ in program.named_predictors()]
+    assert names
+    assert any(name.startswith("predict") for name in names)
+
+
+def test_suggestion_program_forward_uses_predict() -> None:
+    program = SuggestionProgram(lm_config=_SUGGEST_CONFIG)
+    query = ResearchQuery(text="quantum error correction codes")
+    papers = [
+        PaperInfo(
+            title="Alpha Paper On Quantum Computing Advances",
+            abstract=_ABSTRACT,
+            authors=("Alice Smith",),
+            url=HttpUrl("https://example.com/paper"),
+            open_access=False,
+        ),
+    ]
+    fake_pred = dspy.Prediction(suggestion="read the survey")
+    with patch.object(program, "predict", return_value=fake_pred) as predict:
+        result = program.forward(research_query=query, papers=papers)
+
+    predict.assert_called_once_with(research_query=query, papers=papers)
+    assert result.suggestion == "read the survey"
 
 
 @pytest.mark.asyncio

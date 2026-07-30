@@ -1,14 +1,13 @@
-"""GEPA student program for search-agent optimization.
+"""GEPA student programs for search-slice optimization.
 
 Layer: Infrastructure (optimization-only, not imported by runtime).
 
-``SearchProgram`` lives in ``optimize.search.agents`` (owned ReAct on
-``self.react``, sync ``forward``). This module re-exports it for a
-stable import path used by the module registry and docs.
+Students live in ``optimize.search.agents``. This module re-exports them
+for a stable import path used by the module registry and docs.
 """
 
 from __future__ import annotations
 
-from optimize.search.agents import SearchProgram
+from optimize.search.agents import SearchProgram, SuggestionProgram
 
-__all__ = ["SearchProgram"]
+__all__ = ["SearchProgram", "SuggestionProgram"]

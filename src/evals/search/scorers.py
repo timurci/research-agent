@@ -2,16 +2,10 @@
 
 Layer: Infrastructure (evaluation harness).
 
-Search eval datasets are query-only: rows carry a ``ResearchQuery`` and
-no gold paper lists. The task function is the search ``Agent`` /
-``PaperSearchWorkflow`` (``ResearchQuery`` -> ``list[PaperInfo]``).
-
-Relevance scores are produced at score time by a reranker agent, not
-loaded from expectations. Default query scorers use the same
-``search-rerank`` YAML role as the e2e workflow reranker, so e2e
-relevance is largely self-labeled (bootstrap only). Point the labeler
-at a held-out model via ``config/lm.yaml`` or
-``reranker(lm_config=...)``.
+* **search-search** — query-only rows; relevance labeled at score time by
+  the ``search-rerank`` role (bootstrap signal unless held out).
+* **search-suggest** — query+papers rows; length is a code metric;
+  quality is labeled by a held-out ``llm-judge`` rubric judge.
 
 Domain metric logic is not reimplemented here.
 """
@@ -30,8 +24,14 @@ from research_agent.search.metrics import (
     RelevanceMetric,
     search_result_count,
     search_result_relevance,
+    suggestion_length,
+    suggestion_quality,
 )
 from research_agent.search.models import PaperInfo, ResearchQuery
+from research_agent.search.rubrics import SUGGESTION_QUALITY_RUBRIC
+from research_agent.shared.config.lm import ROLE_LLM_JUDGE
+from research_agent.shared.config.lm import lm_config as load_lm_config
+from research_agent.shared.judge import RubricJudge
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Mapping, Sequence
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from opik.evaluation.metrics.score_result import ScoreResult
 
     from research_agent.shared.config.models import LMConfig
+    from research_agent.shared.judge import JudgeVerdict
 
 
 class ScorerShapeError(Exception):
@@ -56,7 +57,22 @@ class _RelevanceLabeler(Protocol):
         ...
 
 
+class _QualityJudge(Protocol):
+    """Async provider of suggestion-quality verdicts."""
+
+    async def judge(
+        self,
+        *,
+        task_input: str,
+        task_output: str,
+        task_context: str = "",
+    ) -> JudgeVerdict:
+        """Score free-text output against a bound rubric."""
+        ...
+
+
 _PAPER_LIST_ADAPTER: TypeAdapter[list[PaperInfo]] = TypeAdapter(list[PaperInfo])
+_JUDGE_ABSTRACT_CHARS: int = 500
 
 
 def _require_paper_list(outputs: object) -> list[PaperInfo]:
@@ -66,6 +82,49 @@ def _require_paper_list(outputs: object) -> list[PaperInfo]:
     except ValidationError as exc:
         msg = f"papers must be list[PaperInfo]: {exc}"
         raise ScorerShapeError(msg) from exc
+
+
+def _require_suggestion(outputs: object) -> str:
+    """Narrow scorer ``suggestion`` value to ``str``."""
+    if not isinstance(outputs, str):
+        msg = f"suggestion must be str, got {type(outputs).__name__}"
+        raise ScorerShapeError(msg)
+    return outputs
+
+
+def format_suggestion_judge_input(query: ResearchQuery) -> str:
+    """Format a research query as judge task input text."""
+    if query.domains:
+        domains = ", ".join(query.domains)
+        return f"Query: {query.text}\nDomains: {domains}"
+    return f"Query: {query.text}"
+
+
+def format_suggestion_judge_context(papers: list[PaperInfo]) -> str:
+    """Format paper titles and abstract snippets as judge context."""
+    if not papers:
+        return "(no papers provided)"
+    blocks: list[str] = []
+    for index, paper in enumerate(papers, start=1):
+        abstract = paper.abstract[:_JUDGE_ABSTRACT_CHARS]
+        blocks.append(
+            f"[{index}] Title: {paper.title}\nAbstract: {abstract}",
+        )
+    return "\n\n".join(blocks)
+
+
+def suggestion_quality_judge(
+    *,
+    lm_config: LMConfig | None = None,
+) -> RubricJudge:
+    """Build the held-out suggestion-quality rubric judge.
+
+    Args:
+        lm_config: Judge LM settings. Defaults to the ``llm-judge`` role
+            from ``config/lm.yaml``.
+    """
+    config = lm_config if lm_config is not None else load_lm_config(ROLE_LLM_JUDGE)
+    return RubricJudge(config, SUGGESTION_QUALITY_RUBRIC)
 
 
 def relevance_metrics_from_ranking(
@@ -151,6 +210,32 @@ def search_query_scorers(
     )
 
 
+def search_suggest_scorers(
+    *,
+    lm_config: LMConfig | None = None,
+    quality_judge: _QualityJudge | None = None,
+) -> Sequence[BaseMetric]:
+    """Default scorers for the suggestion module.
+
+    Combines the code length metric with a held-out LLM quality judge
+    over ``SUGGESTION_QUALITY_RUBRIC``.
+
+    Args:
+        lm_config: Judge LM settings when *quality_judge* is omitted.
+            Defaults to the ``llm-judge`` role from ``config/lm.yaml``.
+        quality_judge: Optional pre-built judge; overrides *lm_config*.
+    """
+    judge = (
+        quality_judge
+        if quality_judge is not None
+        else suggestion_quality_judge(lm_config=lm_config)
+    )
+    return (
+        SuggestionLengthMetric(),
+        SuggestionQualityMetric(judge=judge),
+    )
+
+
 class SearchResultCountMetric(BaseMetric):
     """Opik metric for search result volume (count band with peak)."""
 
@@ -198,4 +283,62 @@ class SearchResultRelevanceMetric(BaseMetric):
         ranking = _run_coroutine(self._labeler.relevance((research_query, papers_list)))
         relevance_scores = relevance_metrics_from_ranking(papers_list, ranking)
         score = search_result_relevance(papers_list, relevance_scores)
+        return evaluation_score_to_score_result(score, name=self.name)
+
+
+class SuggestionLengthMetric(BaseMetric):
+    """Opik metric for suggestion word-count band compliance."""
+
+    def __init__(self) -> None:
+        """Initialize with metric name."""
+        super().__init__(name="suggestion_length")
+
+    def score(
+        self,
+        *,
+        suggestion: object,
+        **kwargs: object,  # noqa: ARG002  # absorbs extra merged keys from Opik
+    ) -> ScoreResult:
+        """Score suggestion length using the domain metric."""
+        score = suggestion_length(_require_suggestion(suggestion))
+        return evaluation_score_to_score_result(score, name=self.name)
+
+
+class SuggestionQualityMetric(BaseMetric):
+    """Opik metric that labels suggestion quality via an LLM rubric judge.
+
+    Rows supply ``query`` and ``papers`` as context; the task output is
+    ``suggestion``. Pass/fail follows rubric fail conditions; the
+    continuous score follows the discrete quality bands.
+    """
+
+    def __init__(self, *, judge: _QualityJudge) -> None:
+        """Initialize with a quality judge."""
+        super().__init__(name="suggestion_quality")
+        self._judge = judge
+
+    def score(
+        self,
+        *,
+        query: object,
+        papers: object,
+        suggestion: object,
+        **kwargs: object,  # noqa: ARG002  # absorbs extra merged keys from Opik
+    ) -> ScoreResult:
+        """Score suggestion quality using the held-out rubric judge."""
+        research_query = ResearchQuery.model_validate(query)
+        papers_list = _require_paper_list(papers)
+        suggestion_text = _require_suggestion(suggestion)
+        verdict = _run_coroutine(
+            self._judge.judge(
+                task_input=format_suggestion_judge_input(research_query),
+                task_output=suggestion_text,
+                task_context=format_suggestion_judge_context(papers_list),
+            ),
+        )
+        score = suggestion_quality(
+            score=verdict.score,
+            passing=not verdict.failing,
+            reason=verdict.reason,
+        )
         return evaluation_score_to_score_result(score, name=self.name)

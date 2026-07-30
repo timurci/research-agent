@@ -20,6 +20,10 @@ search-search:
   model: openai/cli-search
 search-rerank:
   model: infinity/cli-rerank
+search-suggest:
+  model: openai/cli-suggest
+llm-judge:
+  model: openai/cli-judge
 gepa-reflection:
   model: openai/cli-teacher
 """
@@ -47,7 +51,7 @@ def _fake_module() -> OptimizeModule:
 def test_main_list_prints_modules(capsys: pytest.CaptureFixture[str]) -> None:
     main(["--list"])
     out = capsys.readouterr().out.strip().splitlines()
-    assert out == ["search-search"]
+    assert out == ["search-search", "search-suggest"]
 
 
 def test_main_requires_modules() -> None:

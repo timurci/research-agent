@@ -2,29 +2,26 @@
 
 Optimization infrastructure: wires DSPy/LiteLLM adapters.
 
-**Student under optimization:** ``SearchProgram`` — a ``dspy.Module`` that
-owns a persistent ``dspy.ReAct`` (``self.react``) so GEPA can discover and
-rewrite predictor instructions. Each sync ``forward`` activates a fresh
-``InMemorySession`` on the program's ``ScopedSession`` so concurrent
-GEPA eval threads get a private paper bag, not a shared session race.
+**Students under optimization:**
+
+* ``SearchProgram`` — owns ``self.react`` so GEPA can rewrite search
+  ReAct instructions. Each sync ``forward`` activates a fresh
+  ``InMemorySession`` on the program's ``ScopedSession``.
+* ``SuggestionProgram`` — owns ``self.predict`` so GEPA can rewrite
+  suggestion instructions. Sync ``forward`` matches GEPA's evaluator.
 
 GEPA evaluates students via sync ``Module.__call__`` / ``forward`` (not
-``aforward``), so this student is intentionally synchronous.
+``aforward``), so students are intentionally synchronous.
 
-GEPA does not optimize the reranker or the search→rerank e2e workflow;
-those are multi-step / separate capabilities and are out of scope here.
+GEPA does not optimize the reranker or multi-step e2e workflows.
 
-**Reranker** is built only as a relevance *labeler* for metrics (same
-role as in evals scorers), not as a student program.
+**Labelers / judges** (not students):
 
-Default ``LMConfig`` values load from ``config/lm.yaml`` when not injected:
+* ``relevance_labeler`` — held-out reranker for search metrics
+* suggestion quality uses the shared ``RubricJudge`` (``llm-judge`` role)
 
-* ``search-search`` — search student agent
-* ``search-rerank`` — relevance labeler only
-
-Builders accept an optional ``lm_config`` to inject a custom config
-(tests, CLI composition root, alternate endpoints) without reading the
-file. Prefer injection over ambient defaults.
+Default ``LMConfig`` values load from ``config/lm.yaml`` when not injected.
+Builders accept an optional ``lm_config`` for injection (tests, CLI).
 """
 
 from __future__ import annotations
@@ -35,11 +32,13 @@ import dspy
 
 from research_agent.search.agents import (
     Reranker,
+    SuggestionGeneratorSignature,
     build_search_react,
 )
 from research_agent.search.tools import LiteratureSearch, SessionLiteratureSearch
 from research_agent.shared.config.lm import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
 from research_agent.shared.config.lm import lm_config as load_lm_config
+from research_agent.shared.dspy import dspy_lm
 from research_agent.shared.scoped_session import ScopedSession
 from research_agent.shared.session import InMemorySession
 
@@ -54,6 +53,7 @@ _LITERATURE_SEARCH = LiteratureSearch()
 
 __all__ = [
     "SearchProgram",
+    "SuggestionProgram",
     "relevance_labeler",
     "search_agent",
 ]
@@ -83,12 +83,7 @@ class SearchProgram(dspy.Module):
         """
         super().__init__()
         self._lm_config = lm_config
-        self._lm = dspy.LM(
-            model=lm_config.model,
-            api_key=lm_config.api_key,
-            api_base=str(lm_config.base_url) if lm_config.base_url else None,
-            extra_body=lm_config.provider_config,
-        )
+        self._lm = dspy_lm(lm_config)
         self._literature_search = (
             literature_search if literature_search is not None else LiteratureSearch()
         )
@@ -167,3 +162,37 @@ def relevance_labeler(*, lm_config: LMConfig | None = None) -> Reranker:
     """
     config = lm_config if lm_config is not None else load_lm_config(ROLE_SEARCH_RERANK)
     return Reranker(config)
+
+
+class SuggestionProgram(dspy.Module):
+    """GEPA student: suggestion generator with an owned Predict module.
+
+    Attaches ``self.predict`` so ``named_predictors()`` is non-empty and
+    GEPA can optimize instruction text. Uses sync ``forward`` so GEPA's
+    evaluator can call the module. Shape mirrors runtime
+    ``_SuggestionGeneratorProgram`` so saved program JSON loads onto
+    the production agent.
+    """
+
+    def __init__(self, lm_config: LMConfig) -> None:
+        """Build the student with a persistent Predict program.
+
+        Args:
+            lm_config: Student LM settings (``search-suggest`` role).
+        """
+        super().__init__()
+        self._lm = dspy_lm(lm_config)
+        self.predict = dspy.Predict(SuggestionGeneratorSignature)
+
+    def forward(
+        self,
+        research_query: ResearchQuery,
+        papers: list[PaperInfo],
+    ) -> dspy.Prediction:
+        """Generate a research-direction suggestion for the given papers.
+
+        Returns the Predict prediction with ``suggestion`` set for
+        metrics and GEPA reflection.
+        """
+        with dspy.settings.context(lm=self._lm):
+            return self.predict(research_query=research_query, papers=papers)

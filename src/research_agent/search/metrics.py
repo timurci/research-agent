@@ -25,6 +25,7 @@ MIN_RELEVANCE_GRADE = 0
 MAX_RELEVANCE_GRADE = 3
 SUGGESTION_MIN_WORDS = 150
 SUGGESTION_MAX_WORDS = 500
+SUGGESTION_QUALITY_SCORES: frozenset[float] = frozenset({0.0, 0.5, 1.0})
 
 
 class RelevanceMetric(BaseModel):
@@ -258,3 +259,36 @@ def suggestion_length(suggestion: str) -> EvaluationScore:
         ),
         score=SUGGESTION_MAX_WORDS / word_count,
     )
+
+
+def suggestion_quality(
+    *,
+    score: float,
+    passing: bool,
+    reason: str,
+) -> EvaluationScore:
+    """Map a rubric-judge verdict to a domain evaluation score.
+
+    Continuous quality scores follow the suggestion-quality rubric bands
+    and must be exactly one of ``SUGGESTION_QUALITY_SCORES``
+    (``0.0``, ``0.5``, ``1.0``). Pass/fail is taken from the judge's
+    fail-condition assessment, not from comparing *score* to a threshold.
+
+    Args:
+        score: Discrete quality score from the rubric judge.
+        passing: ``False`` when any rubric fail condition applies.
+        reason: Human-readable rationale from the judge.
+
+    Returns:
+        Domain evaluation score for suggestion quality.
+
+    Raises:
+        ValueError: If *score* is not an allowed rubric band value.
+    """
+    if score not in SUGGESTION_QUALITY_SCORES:
+        msg = (
+            f"suggestion quality score must be one of "
+            f"{sorted(SUGGESTION_QUALITY_SCORES)}, got {score}"
+        )
+        raise ValueError(msg)
+    return EvaluationScore(passing=passing, reason=reason, score=score)

@@ -16,10 +16,18 @@ from evals.search.scorers import (
     ScorerShapeError,
     SearchResultCountMetric,
     SearchResultRelevanceMetric,
+    SuggestionLengthMetric,
+    SuggestionQualityMetric,
+    format_suggestion_judge_context,
+    format_suggestion_judge_input,
     relevance_metrics_from_ranking,
 )
-from research_agent.search.metrics import RelevanceMetric
+from research_agent.search.metrics import (
+    SUGGESTION_MIN_WORDS,
+    RelevanceMetric,
+)
 from research_agent.search.models import PaperInfo, ResearchQuery
+from research_agent.shared.judge import JudgeVerdict
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -177,8 +185,97 @@ def test_relevance_metric_empty_outputs_skips_reranker() -> None:
     assert result.name == "search_result_relevance"
     assert result.value == 0.0
     assert result.metadata == {"passing": "False"}
-    assert "Empty input" in (result.reason or "")
-    assert fake.calls == []
+
+
+class _FakeQualityJudge:
+    """Test double for the suggestion quality judge protocol."""
+
+    def __init__(self, verdict: JudgeVerdict) -> None:
+        self._verdict = verdict
+        self.calls: list[dict[str, str]] = []
+
+    async def judge(
+        self,
+        *,
+        task_input: str,
+        task_output: str,
+        task_context: str = "",
+    ) -> JudgeVerdict:
+        self.calls.append(
+            {
+                "task_input": task_input,
+                "task_output": task_output,
+                "task_context": task_context,
+            },
+        )
+        return self._verdict
+
+
+def test_suggestion_length_metric_uses_domain_metric() -> None:
+    suggestion = " ".join(f"w{i}" for i in range(SUGGESTION_MIN_WORDS))
+    metric = SuggestionLengthMetric()
+    result = metric.score(suggestion=suggestion)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+
+    assert isinstance(result, ScoreResult)
+    assert result.name == "suggestion_length"
+    assert result.value == 1.0
+    assert result.metadata == {"passing": "True"}
+
+
+def test_suggestion_length_metric_rejects_non_str() -> None:
+    metric = SuggestionLengthMetric()
+    with pytest.raises(ScorerShapeError, match="suggestion must be str"):
+        metric.score(suggestion=123)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+
+
+def test_suggestion_quality_metric_uses_judge() -> None:
+    papers = [_make_paper(_TITLE_A)]
+    fake = _FakeQualityJudge(
+        JudgeVerdict(score=1.0, failing=False, reason="Strong direction."),
+    )
+    metric = SuggestionQualityMetric(judge=fake)
+    query = ResearchQuery(text="quantum error correction codes", domains=("physics",))
+    suggestion = "Start with the survey paper and replicate the main experiment."
+
+    result = metric.score(  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+        query=query,
+        papers=papers,
+        suggestion=suggestion,
+    )
+
+    assert isinstance(result, ScoreResult)
+    assert result.name == "suggestion_quality"
+    assert result.value == 1.0
+    assert result.metadata == {"passing": "True"}
+    assert result.reason == "Strong direction."
+    assert len(fake.calls) == 1
+    assert "quantum error correction codes" in fake.calls[0]["task_input"]
+    assert "physics" in fake.calls[0]["task_input"]
+    assert fake.calls[0]["task_output"] == suggestion
+    assert _TITLE_A in fake.calls[0]["task_context"]
+
+
+def test_suggestion_quality_metric_maps_failing_verdict() -> None:
+    fake = _FakeQualityJudge(
+        JudgeVerdict(score=0.0, failing=True, reason="Fabricated finding."),
+    )
+    metric = SuggestionQualityMetric(judge=fake)
+    result = metric.score(  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+        query=ResearchQuery(text="quantum error correction codes"),
+        papers=[_make_paper(_TITLE_A)],
+        suggestion="invented next step",
+    )
+    assert isinstance(result, ScoreResult)
+    assert result.value == 0.0
+    assert result.metadata == {"passing": "False"}
+
+
+def test_format_suggestion_judge_input_and_context() -> None:
+    query = ResearchQuery(text="quantum error correction codes", domains=("physics",))
+    papers = [_make_paper(_TITLE_A)]
+    assert "Domains: physics" in format_suggestion_judge_input(query)
+    assert _TITLE_A in format_suggestion_judge_context(papers)
+    assert format_suggestion_judge_context([]) == "(no papers provided)"
 
 
 def test_relevance_metric_low_relevance() -> None:

@@ -4,8 +4,9 @@ Usage::
 
     uv run -m evals.main --list
     uv run -m evals.main --experiment my-exp search-search
+    uv run -m evals.main --experiment my-exp search-suggest
     uv run -m evals.main --experiment my-exp --config config/lm.yaml search-search
-    uv run -m evals.main --experiment my-exp --limit 5 --seed 7 search-search
+    uv run -m evals.main --experiment my-exp --limit 5 --seed 7 search-suggest
 """
 
 from __future__ import annotations
@@ -31,8 +32,10 @@ from research_agent.shared.config.instructions import (
 )
 from research_agent.shared.config.lm import (
     DEFAULT_LM_CONFIG_PATH,
+    ROLE_LLM_JUDGE,
     ROLE_SEARCH_RERANK,
     ROLE_SEARCH_SEARCH,
+    ROLE_SEARCH_SUGGEST,
     lm_config,
 )
 
@@ -68,8 +71,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_LM_CONFIG_PATH,
         help=(
-            "YAML LM config path with search-search and search-rerank "
-            f"roles (default: {DEFAULT_LM_CONFIG_PATH})."
+            "YAML LM config path with search-search, search-rerank, "
+            "search-suggest, and llm-judge roles "
+            f"(default: {DEFAULT_LM_CONFIG_PATH})."
         ),
     )
     parser.add_argument(
@@ -124,6 +128,8 @@ def _run_module(  # noqa: PLR0913  # orchestration function with distinct config
     experiment_name: str,
     search_lm_config: LMConfig,
     rerank_lm_config: LMConfig,
+    suggest_lm_config: LMConfig,
+    judge_lm_config: LMConfig,
     instructions: InstructionsConfig,
     seed: int,
 ) -> None:
@@ -150,13 +156,23 @@ def _run_module(  # noqa: PLR0913  # orchestration function with distinct config
         "eval.seed": seed,
         "search.model": search_lm_config.model,
         "reranker.model": rerank_lm_config.model,
+        "suggest.model": suggest_lm_config.model,
+        "judge.model": judge_lm_config.model,
     }
     if module.sample_limit is not None:
         experiment_config["eval.sample_limit"] = module.sample_limit
-    if "search-search" in instructions:
-        instruction_path = instructions["search-search"]
-        experiment_config["search.instructions.path"] = str(instruction_path)
-        experiment_config["search.instructions.sha256"] = file_sha256(instruction_path)
+    for module_key, config_prefix in (
+        ("search-search", "search"),
+        ("search-suggest", "suggest"),
+    ):
+        if module_key in instructions:
+            instruction_path = instructions[module_key]
+            experiment_config[f"{config_prefix}.instructions.path"] = str(
+                instruction_path,
+            )
+            experiment_config[f"{config_prefix}.instructions.sha256"] = file_sha256(
+                instruction_path,
+            )
 
     client = opik.Opik()
     dataset_name = _dataset_name(module, seed=seed)
@@ -224,9 +240,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     instructions = load_instructions_config(args.instructions)
     search_lm_config = lm_config(ROLE_SEARCH_SEARCH, path=args.config)
     rerank_lm_config = lm_config(ROLE_SEARCH_RERANK, path=args.config)
+    suggest_lm_config = lm_config(ROLE_SEARCH_SUGGEST, path=args.config)
+    judge_lm_config = lm_config(ROLE_LLM_JUDGE, path=args.config)
     modules = build_modules(
         search_lm_config=search_lm_config,
         rerank_lm_config=rerank_lm_config,
+        suggest_lm_config=suggest_lm_config,
+        judge_lm_config=judge_lm_config,
         instructions=instructions,
     )
     if args.limit is not None:
@@ -246,6 +266,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             experiment_name=args.experiment,
             search_lm_config=search_lm_config,
             rerank_lm_config=rerank_lm_config,
+            suggest_lm_config=suggest_lm_config,
+            judge_lm_config=judge_lm_config,
             instructions=instructions,
             seed=args.seed,
         )

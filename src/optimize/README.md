@@ -4,15 +4,15 @@ DSPy **GEPA** optimization tooling for research-agent capabilities.
 
 This package is tooling, not part of the runtime application. It mirrors
 `src/evals` structurally: capability slices under `optimize/<slice>/`,
-Hugging Face query datasets, and adapters that **consume domain metrics**
+Hugging Face datasets, and adapters that **consume domain metrics**
 without redefining "good."
 
 ## Scope
 
 | Optimized | Not optimized |
 |-----------|---------------|
-| Search agent (one GEPA student step) | Reranker |
-| | Search→rerank e2e workflow |
+| Search agent (`search-search`) | Reranker |
+| Suggestion generator (`search-suggest`) | Multi-step e2e workflow |
 
 GEPA optimizes one program step at a time. Multi-step workflows are not
 optimization targets here.
@@ -23,11 +23,11 @@ optimization targets here.
 optimize/
   feedback.py           # EvaluationScore → GEPA ScoreWithFeedback
   main.py               # CLI entrypoint: load configs, wire modules, run GEPA, save
-  search/               # Search-agent optimization slice
-    dataset.py          # HF train split → dspy.Example
+  search/               # Search-slice optimization
+    dataset.py          # HF train splits → dspy.Example
     metrics.py          # GEPA metric adapters over domain metrics
-    agents.py           # SearchProgram student
-    program.py          # re-export of SearchProgram
+    agents.py           # SearchProgram / SuggestionProgram students
+    program.py          # re-exports of students
     modules.py          # OptimizeModule registry
 ```
 
@@ -38,8 +38,8 @@ optimize/
 
 1. Parses CLI arguments (`--config`, `--limit`, `--seed`, `--out-dir`,
    `--budget`, module names, or `--list`).
-2. Loads LM configurations from `config/lm.yaml` for the student,
-   the metric labeler, and the GEPA reflection teacher.
+2. Loads LM configurations from `config/lm.yaml` for students, metric
+   labelers/judges, and the GEPA reflection teacher.
 3. Builds the requested modules via `build_modules(...)`, injecting the
    loaded LM configs into each module's factories.
 4. For each module:
@@ -50,16 +50,38 @@ optimize/
    - Saves the compiled program to `data/optimize/output/<module>.json`.
 
 Live index calls (PubMed, CrossRef, OpenAlex) happen inside the search
-student during optimization.
+student during optimization. The suggestion student uses fixed papers from
+the suggestion-inputs dataset (no live search).
 
-## Dataset
+## Datasets
+
+### `search-search`
 
 - Path: Hugging Face `tcakmako/research_queries`
-- Source split: **`train`** only (evals uses **`test`**; never mixed into GEPA)
+- Source split: **`train`** only (evals uses **`test`**)
+- Shape: query-only (`research_query`)
+
+### `search-suggest`
+
+- Path: local Opik export
+  `data/optimize/input/eval-search-search-io.json` (same file for evals
+  and optimize until a dedicated train/test split exists)
+- Shape (Opik search-search I/O export rows):
+
+  ```text
+  dataset.query   → { text, domains? }
+  output.papers   → list[PaperInfo fields]  (or "-" when absent)
+  ```
+
+  Extra export columns (tokens, feedback scores, …) are ignored. Rows
+  with missing/invalid papers are skipped. Papers are truncated to
+  `SUGGESTION_TOP_N` (runtime suggestion top-N).
+
+### Shared sampling
+
 - Default pool: sample **50** examples
 - Split: pool-size-aware — **50/50** below **200** examples, **80/20**
-  at or above. The threshold keeps GEPA's val (Pareto) set meaningful
-  when total examples are scarce.
+  at or above
 - `--limit N` overrides the pool size before the train/val split
 
 ## How to run
@@ -67,13 +89,22 @@ student during optimization.
 ```bash
 uv run -m optimize.main --list
 uv run -m optimize.main --config config/lm.yaml search-search
-uv run -m optimize.main --config config/lm.yaml --limit 5 --budget light search-search
+uv run -m optimize.main --config config/lm.yaml search-suggest
+uv run -m optimize.main --config config/lm.yaml --limit 5 --budget light search-suggest
 uv run -m optimize.main --config config/lm.yaml --budget 20 search-search
 ```
 
-Requires `config/lm.yaml` roles: `search-search` (student), `search-rerank`
-(metric labeler only), and `gepa-reflection` (GEPA reflection). Compiled
-programs are written to `data/optimize/output/<module>.json`.
+Requires `config/lm.yaml` roles:
+
+| Role | Used by |
+|------|---------|
+| `search-search` | Search student |
+| `search-suggest` | Suggestion student |
+| `search-rerank` | Search metric relevance labeler only |
+| `llm-judge` | Suggestion metric quality judge (all modules) |
+| `gepa-reflection` | GEPA reflection teacher |
+
+Compiled programs are written to `data/optimize/output/<module>.json`.
 
 ## Relationship to runtime and evals
 
@@ -81,14 +112,17 @@ programs are written to `data/optimize/output/<module>.json`.
 - Does **not** import `evals` (sibling tooling; independent adapters).
 - Runtime `research_agent` never imports `optimize`.
 - Same domain metrics as `evals`; different harness (GEPA vs Opik evaluate).
-- Evals runs `search-search` only; optimize does **not** register an e2e module.
+- Evals registers `search-search` and `search-suggest`; optimize does not
+  register an e2e module.
 
 ## Notes
 
-- Live optimization will call PubMed, CrossRef, and OpenAlex inside the
+- Live search optimization calls PubMed, CrossRef, and OpenAlex inside the
   search student — slow and costly; use `--limit` for smoke runs.
+- Suggestion optimization does not call literature indexes; it needs the
+  materialized suggestion-inputs HF dataset.
 - GEPA invokes the metric once when scoring candidates and again when
-  building the reflective dataset, so the labeler LM runs roughly twice
+  building the reflective dataset, so labeler/judge LMs run roughly twice
   per example per iteration.
-- Relevance is labeled by a held-out reranker LM (bootstrap signal), not
-  by optimizing the reranker itself.
+- Search relevance is labeled by a held-out reranker LM; suggestion quality
+  is labeled by a held-out `llm-judge` rubric judge.

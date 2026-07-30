@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import HttpUrl
 
-from evals.search.agents import reranker, search_agent
+from evals.search.agents import reranker, search_agent, suggestion_generator
 from research_agent.search.agents import Reranker
 from research_agent.search.models import ResearchQuery
 from research_agent.shared.config.models import LMConfig
@@ -26,6 +26,11 @@ _RERANK_CONFIG = LMConfig(
     model="infinity/test-rerank",
     api_key="rerank-key",
     base_url=HttpUrl("http://rerank.example/v1"),
+)
+_SUGGEST_CONFIG = LMConfig(
+    model="openai/test-suggest",
+    api_key="suggest-key",
+    base_url=HttpUrl("http://suggest.example/v1"),
 )
 
 
@@ -160,3 +165,72 @@ def test_reranker_uses_injected_lm_config() -> None:
         reranker(lm_config=custom)
 
     assert reranker_cls.call_args.args[0] is custom
+
+
+def test_suggestion_generator_is_callable() -> None:
+    assert callable(suggestion_generator(lm_config=_SUGGEST_CONFIG))
+
+
+@pytest.mark.asyncio
+async def test_suggestion_generator_builds_new_agent_per_call() -> None:
+    agent = suggestion_generator(lm_config=_SUGGEST_CONFIG)
+    query = ResearchQuery(text="quantum error correction codes")
+    constructed: list[tuple[object, object]] = []
+
+    class _StubSuggestion:
+        def __init__(
+            self,
+            lm_config: object,
+            *,
+            instructions_path: object = None,
+        ) -> None:
+            constructed.append((lm_config, instructions_path))
+
+        async def __call__(
+            self,
+            data: tuple[ResearchQuery, list[PaperInfo]],
+        ) -> str:
+            assert data[0] is query
+            return "read the survey"
+
+    with patch("evals.search.agents.SuggestionGenerator", _StubSuggestion):
+        first = await agent((query, []))
+        second = await agent((query, []))
+
+    assert first == "read the survey"
+    assert second == "read the survey"
+    assert len(constructed) == 2
+    assert constructed[0][0] is _SUGGEST_CONFIG
+    assert constructed[0][1] is None
+
+
+@pytest.mark.asyncio
+async def test_suggestion_generator_defaults_to_yaml_suggest_role() -> None:
+    yaml_config = LMConfig(model="openai/from-yaml-suggest")
+    captured: list[LMConfig] = []
+
+    class _StubSuggestion:
+        def __init__(
+            self,
+            lm_config: LMConfig,
+            *,
+            instructions_path: object = None,
+        ) -> None:
+            captured.append(lm_config)
+            assert instructions_path is None
+
+        async def __call__(
+            self,
+            _data: tuple[ResearchQuery, list[PaperInfo]],
+        ) -> str:
+            return ""
+
+    with (
+        patch("evals.search.agents.load_lm_config", return_value=yaml_config) as load,
+        patch("evals.search.agents.SuggestionGenerator", _StubSuggestion),
+    ):
+        agent = suggestion_generator()
+        await agent((ResearchQuery(text="default config check query text"), []))
+
+    load.assert_called_once_with("search-suggest")
+    assert captured == [yaml_config]

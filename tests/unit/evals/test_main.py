@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,11 +15,18 @@ from research_agent.shared.config.instructions import (
 )
 from research_agent.shared.config.models import LMConfig
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 _CONFIG_YAML = """
 search-search:
   model: openai/cli-search
 search-rerank:
   model: infinity/cli-rerank
+search-suggest:
+  model: openai/cli-suggest
+llm-judge:
+  model: openai/cli-judge
 """
 
 
@@ -52,7 +59,7 @@ def _mock_opik_evaluate(opik_mod: MagicMock) -> None:
 
 
 def test_module_names_has_search_suite() -> None:
-    assert frozenset({"search-search"}) == MODULE_NAMES
+    assert frozenset({"search-search", "search-suggest"}) == MODULE_NAMES
 
 
 def test_parser_accepts_modules_and_options() -> None:
@@ -135,13 +142,21 @@ def test_main_requires_experiment_without_list() -> None:
 
 def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
+    program_search = tmp_path / "search-search.json"
+    program_suggest = tmp_path / "search-suggest.json"
+    program_search.write_text("{}", encoding="utf-8")
+    program_suggest.write_text("{}", encoding="utf-8")
     instructions_path = tmp_path / "instructions.yaml"
     instructions_path.write_text(
-        "instructions:\n  search-search: data/optimize/output/search-search.json\n",
+        "instructions:\n"
+        f"  search-search: {program_search}\n"
+        f"  search-suggest: {program_suggest}\n",
         encoding="utf-8",
     )
     search_cfg = LMConfig(model="openai/cli-search")
     rerank_cfg = LMConfig(model="infinity/cli-rerank")
+    suggest_cfg = LMConfig(model="openai/cli-suggest")
+    judge_cfg = LMConfig(model="openai/cli-judge")
     built: dict[str, object] = {}
 
     fake_module = MagicMock()
@@ -155,10 +170,14 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
         *,
         search_lm_config: LMConfig,
         rerank_lm_config: LMConfig,
+        suggest_lm_config: LMConfig,
+        judge_lm_config: LMConfig,
         instructions: dict[str, object] | None,
     ) -> dict[str, object]:
         built["search-search"] = search_lm_config
         built["rerank"] = rerank_lm_config
+        built["suggest"] = suggest_lm_config
+        built["judge"] = judge_lm_config
         built["instructions"] = instructions
         return {"search-search": fake_module}
 
@@ -182,8 +201,11 @@ def test_main_loads_config_and_injects_into_build_modules(tmp_path: Path) -> Non
 
     assert built["search-search"] == search_cfg
     assert built["rerank"] == rerank_cfg
+    assert built["suggest"] == suggest_cfg
+    assert built["judge"] == judge_cfg
     assert built["instructions"] == {
-        "search-search": Path("data/optimize/output/search-search.json"),
+        "search-search": program_search,
+        "search-suggest": program_suggest,
     }
 
 

@@ -15,9 +15,15 @@ from optimize.search.metrics import (
     _research_query_from_example,
     _search_results_from_pred,
     search_query_metric,
+    search_suggest_metric,
 )
-from research_agent.search.metrics import RelevanceMetric, search_result_count
+from research_agent.search.metrics import (
+    SUGGESTION_MIN_WORDS,
+    RelevanceMetric,
+    search_result_count,
+)
 from research_agent.search.models import PaperInfo, ResearchQuery
+from research_agent.shared.judge import JudgeVerdict
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -155,3 +161,78 @@ def test_search_query_metric_accepts_dict_paper_payloads() -> None:
     )
     assert result.score > 0.0
     assert fake.calls
+
+
+class _FakeQualityJudge:
+    """Test double for the suggestion quality judge protocol."""
+
+    def __init__(self, verdict: JudgeVerdict) -> None:
+        self._verdict = verdict
+        self.calls: list[dict[str, str]] = []
+
+    async def judge(
+        self,
+        *,
+        task_input: str,
+        task_output: str,
+        task_context: str = "",
+    ) -> JudgeVerdict:
+        self.calls.append(
+            {
+                "task_input": task_input,
+                "task_output": task_output,
+                "task_context": task_context,
+            },
+        )
+        return self._verdict
+
+
+def test_search_suggest_metric_combines_length_and_quality() -> None:
+    papers = [_make_paper(_TITLE_A)]
+    suggestion = " ".join(f"w{i}" for i in range(SUGGESTION_MIN_WORDS))
+    fake = _FakeQualityJudge(
+        JudgeVerdict(score=1.0, failing=False, reason="Strong direction."),
+    )
+    metric = search_suggest_metric(quality_judge=fake)
+    query = ResearchQuery(text="quantum computing survey methods")
+    gold = SimpleNamespace(research_query=query, papers=papers)
+    pred = SimpleNamespace(suggestion=suggestion)
+
+    result = metric(gold, pred)
+
+    assert isinstance(result, ScoreWithFeedback)
+    assert result.score == pytest.approx(1.0)
+    assert "suggestion_length" in result.feedback
+    assert "suggestion_quality" in result.feedback
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["task_output"] == suggestion
+    assert _TITLE_A in fake.calls[0]["task_context"]
+
+
+def test_search_suggest_metric_rejects_missing_suggestion() -> None:
+    metric = search_suggest_metric(
+        quality_judge=_FakeQualityJudge(
+            JudgeVerdict(score=0.0, failing=True, reason="x"),
+        ),
+    )
+    with pytest.raises(MetricShapeError, match="suggestion"):
+        metric(
+            SimpleNamespace(
+                research_query=ResearchQuery(text="quantum computing survey"),
+                papers=[_make_paper()],
+            ),
+            SimpleNamespace(),
+        )
+
+
+def test_search_suggest_metric_rejects_missing_papers() -> None:
+    metric = search_suggest_metric(
+        quality_judge=_FakeQualityJudge(
+            JudgeVerdict(score=1.0, failing=False, reason="ok"),
+        ),
+    )
+    with pytest.raises(MetricShapeError, match="papers"):
+        metric(
+            SimpleNamespace(research_query=ResearchQuery(text="quantum computing")),
+            SimpleNamespace(suggestion="short"),
+        )

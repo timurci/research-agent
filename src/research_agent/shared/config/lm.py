@@ -14,6 +14,7 @@ Application LM roles for the search slice:
 Tooling roles (not runtime):
 
 * ``gepa-reflection`` — GEPA reflection LM for optimize runs
+* ``llm-judge`` — held-out LLM judge for subjective metrics (all modules)
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ ROLE_SEARCH_SEARCH = "search-search"
 ROLE_SEARCH_RERANK = "search-rerank"
 ROLE_SEARCH_SUGGEST = "search-suggest"
 ROLE_GEPA_REFLECTION = "gepa-reflection"
+ROLE_LLM_JUDGE = "llm-judge"
 
 
 class LMConfigFileError(Exception):

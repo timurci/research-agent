@@ -16,7 +16,7 @@ _FAIL = ("Invents facts not in context.",)
 
 def _rubric(
     *,
-    name: str = "demo",
+    name: str = "demo-rubric",
     criteria: tuple[str, ...] = ("A concrete check",),
     scoring: str = _SCORING,
     fail_conditions: tuple[str, ...] = _FAIL,

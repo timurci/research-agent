@@ -79,7 +79,7 @@ programs are written to `data/optimize/output/<module>.json`.
 - Imports `research_agent` models, metrics, agents, and LM config only.
 - Does **not** import `evals` (sibling tooling; independent adapters).
 - Runtime `research_agent` never imports `optimize`.
-- Same domain metrics as `evals`; different harness (GEPA vs MLflow).
+- Same domain metrics as `evals`; different harness (GEPA vs Opik evaluate).
 - Evals runs `search-search` only; optimize does **not** register an e2e module.
 
 ## Notes

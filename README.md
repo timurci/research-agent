@@ -12,37 +12,28 @@ Given a research question, the agent:
 
 1. **Generates** better search queries from your question
 2. **Searches** multiple scholarly indexes in parallel
-3. **Refines** results by iterating — trying new queries, dropping dead ends, and improving what it finds through a ReAct-style loop
+3. **Refines** results by iterating — trying new queries, dropping dead ends, and improving what it finds
 4. **Suggests** a practical research direction from the top results
 
 That loop is the core idea: not a single-shot keyword lookup, but an agent that keeps searching until it has a strong set of papers, plus a concise suggestion for what to do next.
 
 This is the feature under active development. More research capabilities will follow later.
 
-## Optimizing search
+## Running the search service
 
-The search agent can also be tuned automatically. The `optimize` package uses DSPy GEPA to improve the agent's instructions against a Hugging Face query dataset.
-
-```bash
-uv run -m optimize.main --config config/lm.yaml search-search
-```
-
-This is developer tooling, not part of the runtime agent. See the [optimize README](src/optimize/README.md) for details.
-
-## Generating training queries
-
-Optimization needs example research questions. The `datagen` package synthesizes training queries from a language model.
+From the repository root, after `uv sync` and with config in place (`config/lm.yaml`, and optionally `config/instructions.yaml`):
 
 ```bash
-uv run generate-queries --model openai/gpt-4o-mini --api-key $OPENAI_API_KEY
-# → data/datagen/output/queries_train.jsonl
+uv run uvicorn research_agent.api.app:app --host 0.0.0.0 --port 8000
 ```
 
-See the [datagen README](src/datagen/README.md) for details.
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `POST` | `/search` | Search for papers from a research question |
+| `POST` | `/feedback` | Thumbs feedback on a previous search (can be updated by sending again) |
 
-## Architecture
-
-See [docs/architecture.md](docs/architecture.md) for design decisions and how the system is structured.
+Optional keys for higher literature-API limits: `PUBMED_API_KEY`, `OPENALEX_API_KEY`.
 
 ## Quick start
 
@@ -50,4 +41,4 @@ See [docs/architecture.md](docs/architecture.md) for design decisions and how th
 uv sync
 ```
 
-Then see [Generating training queries](#generating-training-queries) to produce data and [Optimizing search](#optimizing-search) to tune the agent.
+For design details, see [docs/architecture.md](docs/architecture.md). Developer tooling for synthetic queries and prompt optimization lives under `src/datagen` and `src/optimize`.

@@ -45,7 +45,43 @@ DSPy optimization (`src/optimize`) and offline evaluation (`src/evals`) are buil
 
 `src/datagen` is the same class of sibling tooling (synthetic training queries).
 
-Do not pre-build observability middleware, a DI container, long-term memory, or a second capability slice until real pressure exists.
+## Runtime composition and observability
+
+`research_agent.app` is the composition root for serving paper search as a
+library API. `research_agent.api` is the FastAPI presentation layer on top of
+that facade (HTTP only; no domain or workflow logic):
+
+- `build_paper_search_app(...)` loads LM and instructions config, constructs
+  agents, and returns a `PaperSearchApp`. Optional PubMed/OpenAlex API keys
+  are injected there and forwarded to `LiteratureSearch`.
+- Each `search` call builds a fresh `InMemorySession`, `SearchAgent`, and
+  `SuggestionGenerator` so session bags and DSPy program/LM instances stay
+  isolated under concurrent async calls. That also rebuilds the search and
+  suggest graphs and reloads optimized program JSON when instructions are
+  configured. Reranker and literature client are shared for the life of the
+  app.
+- Root Opik traces wrap the whole workflow; the client flushes after the
+  trace context exits (off the event loop) so `SearchRun.trace_id` is ready
+  for immediate `record_feedback`. Feedback logging also flushes. Instruction
+  file hashes in root-trace metadata are recomputed per `search`.
+- `configure_observability=True` (default) registers process-wide
+  `OpikCallback` via `dspy.configure`, replacing any existing DSPy callbacks.
+  Hosts that already configure DSPy should pass `False` and own that setup.
+- Nested DSPy/`OpikCallback` spans cover search and suggest LM work. Rerank
+  uses LiteLLM outside DSPy, so it appears only as wall time under the root
+  trace (no nested rerank span today).
+- `SearchRun.trace_id` is the handle for optional later feedback
+  (thumbs + comment → Opik `user_useful` score via async `record_feedback`).
+- HTTP surface (`POST /search`, `POST /feedback`, `GET /health`) lives under
+  `research_agent.api` and depends only on `PaperSearchApp`. The API lifespan
+  flushes Opik on shutdown.
+
+Observability is middleware applied at the composition root — not a domain
+port. `PaperSearchWorkflow` stays free of Opik. Optimized instructions still
+load from files; Opik catalogs and correlates only.
+
+Do not pre-build a DI container, long-term memory, or a second capability
+slice until real pressure exists.
 
 ## Design heuristics
 

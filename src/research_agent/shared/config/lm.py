@@ -13,7 +13,7 @@ Application LM roles for the search slice:
 
 Tooling roles (not runtime):
 
-* ``optimize-teacher`` — GEPA reflection/teacher for optimize runs
+* ``gepa-reflection`` — GEPA reflection LM for optimize runs
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ DEFAULT_LM_CONFIG_PATH = Path("config/lm.yaml")
 ROLE_SEARCH_SEARCH = "search-search"
 ROLE_SEARCH_RERANK = "search-rerank"
 ROLE_SEARCH_SUGGEST = "search-suggest"
-ROLE_OPTIMIZE_TEACHER = "optimize-teacher"
+ROLE_GEPA_REFLECTION = "gepa-reflection"
 
 
 class LMConfigFileError(Exception):

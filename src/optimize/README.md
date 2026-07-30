@@ -71,7 +71,7 @@ uv run -m optimize.main --config config/lm.yaml --limit 5 --auto light search-se
 ```
 
 Requires `config/lm.yaml` roles: `search-search` (student), `search-rerank`
-(metric labeler only), and `optimize-teacher` (GEPA reflection). Compiled
+(metric labeler only), and `gepa-reflection` (GEPA reflection). Compiled
 programs are written to `data/optimize/output/<module>.json`.
 
 ## Relationship to runtime and evals

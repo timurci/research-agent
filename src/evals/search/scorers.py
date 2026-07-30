@@ -152,7 +152,7 @@ def search_query_scorers(
 
 
 class SearchResultCountMetric(BaseMetric):
-    """Opik metric for search result volume (integer count vs target)."""
+    """Opik metric for search result volume (count band with peak)."""
 
     def __init__(self) -> None:
         """Initialize with metric name."""

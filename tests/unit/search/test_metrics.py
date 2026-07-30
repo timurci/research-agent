@@ -14,12 +14,13 @@ import pytest
 from pydantic import HttpUrl
 
 from research_agent.search.metrics import (
-    MIN_PASS_RESULT_COUNT,
-    OVERSHOOT_HALF_CREDIT,
-    SCORE_AT_TARGET,
+    LOW_RELEVANCE_THRESHOLD,
+    MAX_LOW_RELEVANCE_FRACTION,
+    MAX_RESULT_COUNT,
+    MIN_RESULT_COUNT,
+    PEAK_RESULT_COUNT,
     SUGGESTION_MAX_WORDS,
     SUGGESTION_MIN_WORDS,
-    TARGET_RESULT_COUNT,
     RelevanceMetric,
     ndcg_at_10,
     search_result_count,
@@ -71,38 +72,47 @@ def test_search_result_relevance_length_mismatch_takes_precedence_over_empty() -
 @pytest.mark.parametrize(
     ("values", "expected_passing", "expected_verdict", "expected_score"),
     [
-        ([0.9, 0.95, 1.0, 0.91], True, "Results are mostly high relevance.", 1.0),
-        ([0.5, 0.6, 0.7, 0.8], True, "Results are within acceptable bounds.", 0.5),
-        ([0.0, 0.1, 0.2, 0.49], False, "Too many low relevance results.", 0.0),
         (
-            [0.9, 0.8, 0.5, 0.4, 0.1],
+            [0.9, 0.95, 1.0, 0.91],
             True,
-            "Results are within acceptable bounds.",
-            0.4,
+            "Results meet the relevance threshold.",
+            1.0,
+        ),
+        (
+            [0.5, 0.6, 0.7, 0.8],
+            False,
+            "Too many low relevance results.",
+            0.0,
+        ),
+        (
+            [0.0, 0.1, 0.2, 0.49],
+            False,
+            "Too many low relevance results.",
+            0.0,
         ),
         (
             [1.0, 0.95, 0.9, 0.4],
-            True,
-            "Results are mostly high relevance.",
+            False,
+            "Too many low relevance results.",
             0.75,
         ),
         (
-            [0.9, 0.4, 0.3, 0.1],
+            [0.9] * 19 + [0.4],
+            True,
+            "Results meet the relevance threshold.",
+            0.95,
+        ),
+        (
+            [0.9] * 18 + [0.4],
             False,
             "Too many low relevance results.",
-            0.25,
+            18 / 19,
         ),
         (
-            [0.9, 0.8, 0.1, 0.1],
-            True,
-            "Results are within acceptable bounds.",
-            0.375,
-        ),
-        (
-            [0.9, 0.5, 0.5, 0.5],
-            True,
-            "Results are within acceptable bounds.",
-            0.625,
+            [0.8999],
+            False,
+            "Too many low relevance results.",
+            0.0,
         ),
     ],
 )
@@ -123,9 +133,8 @@ def test_search_result_relevance_cases(
 @pytest.mark.parametrize(
     ("value", "tier"),
     [
-        (0.9, "HIGH"),
-        (0.5, "MEDIUM"),
-        (0.4999, "LOW"),
+        (LOW_RELEVANCE_THRESHOLD, "HIGH"),
+        (LOW_RELEVANCE_THRESHOLD - 1e-9, "LOW"),
     ],
 )
 def test_search_result_relevance_threshold_inclusion(value: float, tier: str) -> None:
@@ -133,11 +142,10 @@ def test_search_result_relevance_threshold_inclusion(value: float, tier: str) ->
     score = search_result_relevance(results, [RelevanceMetric(value=value)])
     if tier == "HIGH":
         assert score.score == 1.0
-        assert "Results are mostly high relevance." in score.reason
-    elif tier == "MEDIUM":
-        assert score.score == 0.5
-        assert "Results are within acceptable bounds." in score.reason
+        assert score.passing is True
+        assert "Results meet the relevance threshold." in score.reason
     else:
+        assert score.score == 0.0
         assert score.passing is False
         assert "Too many low relevance results." in score.reason
 
@@ -160,8 +168,13 @@ def test_search_result_relevance_reason_groups_titles_by_tier() -> None:
     assert "Low relevance" in score.reason
     assert "High relevance" in score.reason
     assert _TITLE_A in score.reason
+    assert _TITLE_B in score.reason
     assert _TITLE_C in score.reason
+    assert _TITLE_A not in score.reason.split("High relevance", 1)[1]
     assert _TITLE_B not in score.reason.split("High relevance", 1)[1]
+    assert score.passing is False
+    assert score.score == pytest.approx(1 / 3)
+    assert MAX_LOW_RELEVANCE_FRACTION < 1 / 3
 
 
 def _expected_dcg(relevances: list[int], k: int = 10) -> float:
@@ -239,27 +252,24 @@ def test_ndcg_at_10_rejects_out_of_range_grades(bad_grade: int) -> None:
 
 
 def _expected_volume_score(count: int) -> float:
-    if count <= 0:
+    if count < MIN_RESULT_COUNT or count > MAX_RESULT_COUNT:
         return 0.0
-    if count <= TARGET_RESULT_COUNT:
-        return SCORE_AT_TARGET * (count / TARGET_RESULT_COUNT)
-    overshoot = count - TARGET_RESULT_COUNT
-    residual = 1.0 - SCORE_AT_TARGET
-    return SCORE_AT_TARGET + residual * (
-        overshoot / (overshoot + OVERSHOOT_HALF_CREDIT)
-    )
+    if count <= PEAK_RESULT_COUNT:
+        return (count - MIN_RESULT_COUNT) / (PEAK_RESULT_COUNT - MIN_RESULT_COUNT)
+    return (MAX_RESULT_COUNT - count) / (MAX_RESULT_COUNT - PEAK_RESULT_COUNT)
 
 
 @pytest.mark.parametrize(
     ("count", "expected_passing"),
     [
         (0, False),
-        (14, False),
-        (15, True),
-        (25, True),
+        (MIN_RESULT_COUNT - 1, False),
+        (MIN_RESULT_COUNT, True),
+        (20, True),
+        (PEAK_RESULT_COUNT, True),
         (50, True),
-        (60, True),
-        (75, True),
+        (MAX_RESULT_COUNT, True),
+        (MAX_RESULT_COUNT + 1, False),
     ],
 )
 def test_search_result_count_steps(
@@ -271,71 +281,89 @@ def test_search_result_count_steps(
     assert score.passing is expected_passing
     assert score.score == pytest.approx(_expected_volume_score(count))
     assert str(count) in score.reason
-    assert str(TARGET_RESULT_COUNT) in score.reason
+    assert str(PEAK_RESULT_COUNT) in score.reason
 
 
-def test_search_result_count_linear_ends_below_one_at_target() -> None:
-    results = [_make_paper(f"Paper Number {i:03d}") for i in range(TARGET_RESULT_COUNT)]
+def test_search_result_count_peak_is_one() -> None:
+    results = [_make_paper(f"Paper Number {i:03d}") for i in range(PEAK_RESULT_COUNT)]
     score = search_result_count(results)
-    assert score.score == pytest.approx(SCORE_AT_TARGET)
-    assert score.score < 1.0
+    assert score.passing is True
+    assert score.score == pytest.approx(1.0)
 
 
-def test_search_result_count_overshoot_is_concave_and_below_one() -> None:
-    step = 10
-    at_target = search_result_count(
-        [_make_paper(f"Paper Number {i:03d}") for i in range(TARGET_RESULT_COUNT)]
+def test_search_result_count_rises_then_falls() -> None:
+    below_peak = search_result_count(
+        [_make_paper(f"Paper Number {i:03d}") for i in range(20)]
     )
-    plus_one_step = search_result_count(
-        [
-            _make_paper(f"Paper Number {i:03d}")
-            for i in range(TARGET_RESULT_COUNT + step)
-        ]
+    at_peak = search_result_count(
+        [_make_paper(f"Paper Number {i:03d}") for i in range(PEAK_RESULT_COUNT)]
     )
-    plus_two_steps = search_result_count(
-        [
-            _make_paper(f"Paper Number {i:03d}")
-            for i in range(TARGET_RESULT_COUNT + 2 * step)
-        ]
+    above_peak = search_result_count(
+        [_make_paper(f"Paper Number {i:03d}") for i in range(50)]
     )
-    assert at_target.score < plus_one_step.score < plus_two_steps.score < 1.0
-    gain_first = plus_one_step.score - at_target.score
-    gain_second = plus_two_steps.score - plus_one_step.score
-    assert gain_first > gain_second
+    assert below_peak.score < at_peak.score
+    assert above_peak.score < at_peak.score
+    assert below_peak.score == pytest.approx(
+        (20 - MIN_RESULT_COUNT) / (PEAK_RESULT_COUNT - MIN_RESULT_COUNT)
+    )
+    assert above_peak.score == pytest.approx(
+        (MAX_RESULT_COUNT - 50) / (MAX_RESULT_COUNT - PEAK_RESULT_COUNT)
+    )
 
 
-def test_search_result_count_below_pass_floor_reason() -> None:
+def test_search_result_count_band_endpoints_score_zero_but_pass() -> None:
+    at_min = search_result_count(
+        [_make_paper(f"Paper Number {i:03d}") for i in range(MIN_RESULT_COUNT)]
+    )
+    at_max = search_result_count(
+        [_make_paper(f"Paper Number {i:03d}") for i in range(MAX_RESULT_COUNT)]
+    )
+    assert at_min.passing is True
+    assert at_max.passing is True
+    assert at_min.score == pytest.approx(0.0)
+    assert at_max.score == pytest.approx(0.0)
+
+
+def test_search_result_count_below_min_reason() -> None:
     score = search_result_count([])
     assert score == EvaluationScore(
         passing=False,
         reason=(
-            f"Returned 0 results; need at least {MIN_PASS_RESULT_COUNT} to pass "
-            f"(target {TARGET_RESULT_COUNT})."
+            f"Returned 0 results; need at least {MIN_RESULT_COUNT} to pass "
+            f"(peak {PEAK_RESULT_COUNT}, max {MAX_RESULT_COUNT})."
         ),
         score=0.0,
     )
 
 
-def test_search_result_count_pass_below_target_reason() -> None:
-    results = [
-        _make_paper(f"Paper Number {i:03d}") for i in range(MIN_PASS_RESULT_COUNT)
-    ]
+def test_search_result_count_above_max_reason() -> None:
+    count = MAX_RESULT_COUNT + 5
+    results = [_make_paper(f"Paper Number {i:03d}") for i in range(count)]
     score = search_result_count(results)
-    assert score.passing is True
-    assert score.score == pytest.approx(
-        SCORE_AT_TARGET * (MIN_PASS_RESULT_COUNT / TARGET_RESULT_COUNT)
-    )
-    assert f"target {TARGET_RESULT_COUNT}" in score.reason
-    assert f"pass floor {MIN_PASS_RESULT_COUNT}" in score.reason
+    assert score.passing is False
+    assert score.score == 0.0
+    assert f"need at most {MAX_RESULT_COUNT}" in score.reason
+    assert f"min {MIN_RESULT_COUNT}" in score.reason
+    assert f"peak {PEAK_RESULT_COUNT}" in score.reason
 
 
-def test_search_result_count_meets_target_reason() -> None:
-    results = [_make_paper(f"Paper Number {i:03d}") for i in range(TARGET_RESULT_COUNT)]
+def test_search_result_count_pass_between_min_and_peak_reason() -> None:
+    count = MIN_RESULT_COUNT + 5
+    results = [_make_paper(f"Paper Number {i:03d}") for i in range(count)]
     score = search_result_count(results)
     assert score.passing is True
-    assert score.score == pytest.approx(SCORE_AT_TARGET)
-    assert f"target {TARGET_RESULT_COUNT} met" in score.reason
-    assert f"pass floor {MIN_PASS_RESULT_COUNT}" in score.reason
+    assert score.score == pytest.approx(_expected_volume_score(count))
+    assert f"peak {PEAK_RESULT_COUNT}" in score.reason
+    assert f"band [{MIN_RESULT_COUNT}, {MAX_RESULT_COUNT}]" in score.reason
+
+
+def test_search_result_count_meets_peak_reason() -> None:
+    results = [_make_paper(f"Paper Number {i:03d}") for i in range(PEAK_RESULT_COUNT)]
+    score = search_result_count(results)
+    assert score.passing is True
+    assert score.score == pytest.approx(1.0)
+    assert f"peak {PEAK_RESULT_COUNT} met" in score.reason
+    assert f"band [{MIN_RESULT_COUNT}, {MAX_RESULT_COUNT}]" in score.reason
 
 
 def _words(count: int) -> str:

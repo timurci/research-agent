@@ -20,7 +20,7 @@ search-search:
   model: openai/cli-search
 search-rerank:
   model: infinity/cli-rerank
-optimize-teacher:
+gepa-reflection:
   model: openai/cli-teacher
 """
 

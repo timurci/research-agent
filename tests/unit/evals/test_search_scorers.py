@@ -71,16 +71,17 @@ class _FakeReranker:
         ]
 
 
-def test_count_metric_below_pass_floor() -> None:
+def test_count_metric_below_min() -> None:
     papers = [_make_paper(_TITLE_A), _make_paper(_TITLE_B)]
     metric = SearchResultCountMetric()
     result = metric.score(papers=papers)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
 
     assert isinstance(result, ScoreResult)
     assert result.name == "search_result_count"
-    assert result.value == 0.038
+    assert result.value == 0.0
     assert result.metadata == {"passing": "False"}
     assert "Returned 2 results" in (result.reason or "")
+    assert "need at least 10" in (result.reason or "")
 
 
 def test_count_metric_pass_with_partial_score() -> None:
@@ -89,20 +90,20 @@ def test_count_metric_pass_with_partial_score() -> None:
     result = metric.score(papers=papers)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
 
     assert isinstance(result, ScoreResult)
-    assert result.value == 0.38
+    assert result.value == 0.5
     assert result.metadata == {"passing": "True"}
     assert "Returned 20 results" in (result.reason or "")
 
 
-def test_count_metric_meets_target() -> None:
-    papers = [_make_paper(f"Paper Number {i:03d}") for i in range(50)]
+def test_count_metric_meets_peak() -> None:
+    papers = [_make_paper(f"Paper Number {i:03d}") for i in range(30)]
     metric = SearchResultCountMetric()
     result = metric.score(papers=papers)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
 
     assert isinstance(result, ScoreResult)
-    assert result.value == 0.95
+    assert result.value == 1.0
     assert result.metadata == {"passing": "True"}
-    assert "target 50 met" in (result.reason or "")
+    assert "peak 30 met" in (result.reason or "")
 
 
 def test_relevance_metrics_from_ranking_aligns_by_index() -> None:
@@ -150,7 +151,7 @@ def test_require_paper_list_rejects_non_list() -> None:
 
 def test_relevance_metric_uses_reranker() -> None:
     papers = [_make_paper(f"Paper Number {i:03d} Title") for i in range(4)]
-    fake = _FakeReranker([0.7, 0.8, 0.9, 1.0])
+    fake = _FakeReranker([0.95, 0.92, 0.9, 1.0])
     metric = SearchResultRelevanceMetric(labeler=fake)
     query = ResearchQuery(text="neural network optimization methods")
 
@@ -158,7 +159,7 @@ def test_relevance_metric_uses_reranker() -> None:
 
     assert isinstance(result, ScoreResult)
     assert result.name == "search_result_relevance"
-    assert result.value == 0.75
+    assert result.value == 1.0
     assert result.metadata == {"passing": "True"}
     assert len(fake.calls) == 1
     assert fake.calls[0][0] == query
@@ -196,9 +197,12 @@ def test_relevance_metric_low_relevance() -> None:
 
 
 def test_count_metric_accepts_dict_paper_payloads() -> None:
-    paper = _make_paper(_TITLE_A)
+    papers = [
+        _make_paper(f"Paper Number {i:03d}").model_dump(mode="json") for i in range(20)
+    ]
     metric = SearchResultCountMetric()
-    result = metric.score(papers=[paper.model_dump(mode="json")])  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
+    result = metric.score(papers=papers)  # ty: ignore[missing-argument]  # false positive: union of bound/unbound score()
     assert isinstance(result, ScoreResult)
     assert result.name == "search_result_count"
-    assert result.value == 0.019
+    assert result.value == 0.5
+    assert result.metadata == {"passing": "True"}

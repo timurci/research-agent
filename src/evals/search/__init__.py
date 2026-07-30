@@ -1,6 +1,6 @@
 """Opik scorers, agents, and dataset loaders for the search capability.
 
-Query-only evalsets: ``task`` is the search agent; relevance labels
-come from ``reranker()`` at score time. Rows come from
-``load_search_eval_data()`` (HF ``tcakmako/research_queries`` test split).
+* ``search-search`` — query-only HF test rows; relevance from ``reranker()``.
+* ``search-suggest`` — query+papers from local Opik I/O export; length +
+  LLM quality judge.
 """

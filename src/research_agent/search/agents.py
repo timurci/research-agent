@@ -136,7 +136,7 @@ class _SearchProgram(dspy.Module):
 class _SuggestionGeneratorProgram(dspy.Module):
     """Runtime DSPy module wrapping the suggestion generator predictor.
 
-    Mirrors the shape of a future GEPA-optimized suggestion program so
+    Mirrors the shape of the GEPA-optimized ``SuggestionProgram`` so
     saved program JSON can be loaded onto the runtime agent's predictor
     via ``dspy.Module.load``.
     """

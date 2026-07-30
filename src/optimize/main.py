@@ -4,21 +4,17 @@ Usage::
 
     uv run -m optimize.main --list
     uv run -m optimize.main --config config/lm.yaml search-search
-    uv run -m optimize.main --limit 5 --budget medium search-search
+    uv run -m optimize.main --config config/lm.yaml search-suggest
+    uv run -m optimize.main --limit 5 --budget medium search-suggest
     uv run -m optimize.main --budget 20 search-search
 
-Optimizes one student step at a time (currently: search agent only).
-Does not optimize the reranker or the search→rerank e2e workflow.
+Optimizes one student step at a time (search agent or suggestion
+generator). Does not optimize the reranker or multi-step e2e workflows.
 
-This pipeline loads the Hugging Face **train** split (evals keeps
-**test**), samples a pool, splits it into GEPA train (reflection) and
-val (Pareto selection) using a pool-size-aware fraction, builds GEPA
-metrics that adapt domain quality functions, and compiles the student
-program (``optimize.search.agents.SearchProgram``) with ``dspy.GEPA``.
-Live index calls (PubMed, CrossRef, OpenAlex) happen inside the search
-student during optimization. The ``search-rerank`` role is used only
-for relevance labeling in metrics; ``gepa-reflection`` is the GEPA
-reflection LM.
+This pipeline loads the matching Hugging Face **train** split (evals
+keeps **test**), samples a pool, splits it into GEPA train (reflection)
+and val (Pareto selection), builds GEPA metrics that adapt domain
+quality functions, and compiles the student program with ``dspy.GEPA``.
 """
 
 from __future__ import annotations
@@ -41,8 +37,10 @@ from optimize.search.modules import (
 from research_agent.shared.config.lm import (
     DEFAULT_LM_CONFIG_PATH,
     ROLE_GEPA_REFLECTION,
+    ROLE_LLM_JUDGE,
     ROLE_SEARCH_RERANK,
     ROLE_SEARCH_SEARCH,
+    ROLE_SEARCH_SUGGEST,
     lm_config,
 )
 from research_agent.shared.dspy import dspy_lm
@@ -111,8 +109,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_LM_CONFIG_PATH,
         help=(
-            "YAML LM config path: search-search (student), search-rerank "
-            "(metric labeler only), and gepa-reflection (GEPA reflection; "
+            "YAML LM config path: search-search / search-suggest (students), "
+            "search-rerank (search metric labeler), llm-judge (suggest metric "
+            f"judge), and gepa-reflection (GEPA reflection; "
             f"default: {DEFAULT_LM_CONFIG_PATH})."
         ),
     )
@@ -241,10 +240,14 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     search_cfg = lm_config(ROLE_SEARCH_SEARCH, path=args.config)
     labeler_cfg = lm_config(ROLE_SEARCH_RERANK, path=args.config)
+    suggest_cfg = lm_config(ROLE_SEARCH_SUGGEST, path=args.config)
+    judge_cfg = lm_config(ROLE_LLM_JUDGE, path=args.config)
     teacher_lm = dspy_lm(lm_config(ROLE_GEPA_REFLECTION, path=args.config))
     modules = build_modules(
         search_lm_config=search_cfg,
         labeler_lm_config=labeler_cfg,
+        suggest_lm_config=suggest_cfg,
+        judge_lm_config=judge_cfg,
     )
     run_options = _RunOptions(
         seed=args.seed,

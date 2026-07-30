@@ -2,7 +2,7 @@
 
 Exercises the pure domain metric functions:
 ``search_result_relevance``, ``search_result_count``, ``ndcg_at_10``,
-and ``suggestion_length``.
+``suggestion_length``, and ``suggestion_quality``.
 No network, no LLM, no async.
 """
 
@@ -26,6 +26,7 @@ from research_agent.search.metrics import (
     search_result_count,
     search_result_relevance,
     suggestion_length,
+    suggestion_quality,
 )
 from research_agent.search.models import PaperInfo
 from research_agent.shared.metric import EvaluationScore
@@ -416,3 +417,28 @@ def test_suggestion_length_too_short_reason() -> None:
         reason="Suggestion is too short, it's likely to be insufficient.",
         score=0.0,
     )
+
+
+@pytest.mark.parametrize(
+    ("score", "passing", "reason"),
+    [
+        (0.0, False, "Fabricated claims."),
+        (0.5, True, "Mixed quality."),
+        (1.0, True, "Strong direction."),
+        (0.0, True, "Low score but no hard fail."),
+        (1.0, False, "Hit a fail condition."),
+    ],
+)
+def test_suggestion_quality_accepts_rubric_bands(
+    score: float,
+    passing: bool,  # noqa: FBT001  # parametrize row is (score, passing, reason)
+    reason: str,
+) -> None:
+    result = suggestion_quality(score=score, passing=passing, reason=reason)
+    assert result == EvaluationScore(passing=passing, reason=reason, score=score)
+
+
+@pytest.mark.parametrize("score", [-0.1, 0.25, 0.75, 1.1, 2.0])
+def test_suggestion_quality_rejects_non_band_scores(score: float) -> None:
+    with pytest.raises(ValueError, match="suggestion quality score"):
+        suggestion_quality(score=score, passing=True, reason="ok")

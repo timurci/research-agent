@@ -1,2 +1,3 @@
 instructions:
-  # search-search: data/optimize/output/search-search.json
+  search-search: data/optimize/output/search-search.json
+  search-suggest: data/optimize/output/search-suggest.json

@@ -1,20 +1,16 @@
 """Search optimization module registry for GEPA.
 
-Registers the **search agent** student only. GEPA optimizes one program
-step at a time; there is no e2e (search→rerank) module and no reranker
-student.
+Registers single-step students only:
 
-Query-only modules load HF research queries (train split) with no gold
-paper lists. The metric is ``search_query_metric`` (combined domain
-quality). The student is ``SearchProgram`` (``optimize.search.agents``),
-a ``dspy.Module`` that owns ``self.react`` so GEPA can optimize its
-predictor instructions.
+* ``search-search`` — ``SearchProgram``; count + relevance metric
+* ``search-suggest`` — ``SuggestionProgram``; length + quality metric
 
-Default data plan: sample ``SEARCH_SAMPLE_LIMIT`` examples from HF train,
+Default data plan: sample ``SEARCH_SAMPLE_LIMIT`` /
+``SUGGEST_SAMPLE_LIMIT`` examples from the matching HF **train** split,
 then a train/val split whose fraction depends on the resulting pool size
 (``train_fraction_for_pool_size``): 50/50 below
-``LOW_POOL_SPLIT_THRESHOLD`` (200), 80/20 at or above. The HF test split
-is reserved for evals and is never used here.
+``LOW_POOL_SPLIT_THRESHOLD`` (200), 80/20 at or above. HF **test** splits
+are reserved for evals and are never used here.
 """
 
 from __future__ import annotations
@@ -23,9 +19,9 @@ import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from optimize.search.agents import SearchProgram
-from optimize.search.dataset import load_search_trainset
-from optimize.search.metrics import search_query_metric
+from optimize.search.agents import SearchProgram, SuggestionProgram
+from optimize.search.dataset import load_search_trainset, load_suggest_trainset
+from optimize.search.metrics import search_query_metric, search_suggest_metric
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,9 +31,10 @@ if TYPE_CHECKING:
 
     from research_agent.shared.config.models import LMConfig
 
-MODULE_NAMES: frozenset[str] = frozenset({"search-search"})
+MODULE_NAMES: frozenset[str] = frozenset({"search-search", "search-suggest"})
 
 SEARCH_SAMPLE_LIMIT: int | None = 50
+SUGGEST_SAMPLE_LIMIT: int | None = 50
 SEARCH_TRAIN_FRACTION: float = 0.8
 LOW_POOL_TRAIN_FRACTION: float = 0.5
 LOW_POOL_SPLIT_THRESHOLD: int = 200
@@ -59,14 +56,20 @@ def build_modules(
     *,
     search_lm_config: LMConfig,
     labeler_lm_config: LMConfig | None = None,
+    suggest_lm_config: LMConfig,
+    judge_lm_config: LMConfig | None = None,
 ) -> dict[str, OptimizeModule]:
-    """Build search-agent optimize modules with LM config injection.
+    """Build search-slice optimize modules with LM config injection.
 
     Args:
         search_lm_config: Student LM settings (``search-search`` role)
             for the search student program.
         labeler_lm_config: Held-out relevance labeler LM (``search-rerank``
-            role). Used only by the metric, not as a student.
+            role). Used only by the search metric, not as a student.
+        suggest_lm_config: Student LM settings (``search-suggest`` role)
+            for the suggestion student program.
+        judge_lm_config: Held-out quality judge LM (``llm-judge`` role)
+            for the suggestion metric.
     """
     return {
         "search-search": OptimizeModule(
@@ -75,6 +78,13 @@ def build_modules(
             metric=search_query_metric(lm_config=labeler_lm_config),
             build_student=lambda: SearchProgram(lm_config=search_lm_config),
             sample_limit=SEARCH_SAMPLE_LIMIT,
+        ),
+        "search-suggest": OptimizeModule(
+            name="search-suggest",
+            load_trainset=load_suggest_trainset,
+            metric=search_suggest_metric(lm_config=judge_lm_config),
+            build_student=lambda: SuggestionProgram(lm_config=suggest_lm_config),
+            sample_limit=SUGGEST_SAMPLE_LIMIT,
         ),
     }
 

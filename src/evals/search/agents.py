@@ -6,6 +6,7 @@ injected:
 
 * ``search-search`` — search agent
 * ``search-rerank`` — reranker / relevance labeler
+* ``search-suggest`` — suggestion generator
 
 Builders accept an optional ``lm_config`` to inject a custom config
 (tests, CLI composition root, alternate endpoints) without reading the
@@ -21,9 +22,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from research_agent.search.agents import Reranker, SearchAgent
+from research_agent.search.agents import Reranker, SearchAgent, SuggestionGenerator
 from research_agent.search.tools import LiteratureSearch
-from research_agent.shared.config.lm import ROLE_SEARCH_RERANK, ROLE_SEARCH_SEARCH
+from research_agent.shared.config.lm import (
+    ROLE_SEARCH_RERANK,
+    ROLE_SEARCH_SEARCH,
+    ROLE_SEARCH_SUGGEST,
+)
 from research_agent.shared.config.lm import lm_config as load_lm_config
 from research_agent.shared.session import InMemorySession
 
@@ -79,3 +84,32 @@ def reranker(*, lm_config: LMConfig | None = None) -> Reranker:
     """
     config = lm_config if lm_config is not None else load_lm_config(ROLE_SEARCH_RERANK)
     return Reranker(config)
+
+
+def suggestion_generator(
+    *,
+    lm_config: LMConfig | None = None,
+    instructions_path: Path | None = None,
+) -> Agent[tuple[ResearchQuery, list[PaperInfo]], str]:
+    """Suggestion generator for eval: fresh agent instance per task.
+
+    Returns a long-lived callable that builds a fresh
+    ``SuggestionGenerator`` on every call so tasks cannot share DSPy
+    program state.
+
+    Args:
+        lm_config: LM settings for constructed agents. Defaults to the
+            ``search-suggest`` role from ``config/lm.yaml``.
+        instructions_path: Optional path to a saved DSPy program whose
+            optimized instructions are loaded onto each fresh generator.
+    """
+    config = lm_config if lm_config is not None else load_lm_config(ROLE_SEARCH_SUGGEST)
+
+    async def run(data: tuple[ResearchQuery, list[PaperInfo]]) -> str:
+        agent = SuggestionGenerator(
+            config,
+            instructions_path=instructions_path,
+        )
+        return await agent(data)
+
+    return run

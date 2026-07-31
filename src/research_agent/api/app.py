@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from research_agent.api.handlers import register_exception_handlers
 from research_agent.api.routes import router
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from research_agent.app import PaperSearchApp
+
+ALLOWED_CORS_ORIGINS = ("https://timurci.github.io",)
 
 __all__ = ["app", "create_app"]
 
@@ -65,6 +68,13 @@ def create_app(*, paper_search_app: PaperSearchApp | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     register_exception_handlers(application)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(ALLOWED_CORS_ORIGINS),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     application.include_router(router)
     return application
 

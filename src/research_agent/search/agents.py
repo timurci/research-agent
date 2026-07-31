@@ -12,16 +12,16 @@ a ``SearchOutcome``; the agent returns the index search results as a list.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
 import dspy
-import litellm
 
 from research_agent.search.tools import (
     LiteratureSearch,
     SessionLiteratureSearch,
 )
 from research_agent.shared.agent import Agent
+from research_agent.shared.rerank import RerankScore, build_rerank_client
 
 from .models import PaperInfo, ResearchQuery
 
@@ -34,11 +34,6 @@ if TYPE_CHECKING:
 _MAX_REACT_ITERS: int = 10
 _LITERATURE_SEARCH_TOOL_NAME: str = "LiteratureSearch"
 _RERANK_MAX_ABSTRACT_CHARS: int = 2048
-
-
-class _RelevanceScore(TypedDict):
-    index: int
-    relevance_score: float
 
 
 class SearchOutcome(StrEnum):
@@ -211,12 +206,7 @@ class Reranker(Agent[tuple[ResearchQuery, list[PaperInfo]], list[PaperInfo]]):
         Args:
             reranker_config: The language model to use.
         """
-        self._model = reranker_config.model
-        self._api_key = reranker_config.api_key
-        self._api_base = (
-            str(reranker_config.base_url) if reranker_config.base_url else None
-        )
-        self._provider_config = reranker_config.provider_config
+        self._client = build_rerank_client(reranker_config)
 
     async def __call__(
         self, data: tuple[ResearchQuery, list[PaperInfo]]
@@ -228,7 +218,7 @@ class Reranker(Agent[tuple[ResearchQuery, list[PaperInfo]], list[PaperInfo]]):
 
     async def relevance(
         self, data: tuple[ResearchQuery, list[PaperInfo]]
-    ) -> list[_RelevanceScore]:
+    ) -> list[RerankScore]:
         """Compute relevance scores for search results."""
         query, results = data
         if query.domains:
@@ -240,15 +230,7 @@ class Reranker(Agent[tuple[ResearchQuery, list[PaperInfo]], list[PaperInfo]]):
             f"Title: {r.title}; Abstract: {r.abstract[:_RERANK_MAX_ABSTRACT_CHARS]}"
             for r in results
         ]
-        ranking = await litellm.arerank(
-            model=self._model,
-            api_key=self._api_key,
-            api_base=self._api_base,
-            query=query_text,
-            documents=docs,
-            extra_body=self._provider_config,
-        )
-        return ranking.results
+        return await self._client.rerank(query=query_text, documents=docs)
 
 
 class SuggestionGenerator(

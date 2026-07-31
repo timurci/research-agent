@@ -1,6 +1,8 @@
 # Copy to config/lm.yaml and edit for local endpoints.
 # Roles are validated as research_agent.shared.config.models.LMConfig fields.
-# Optional provider_config is forwarded to LiteLLM as extra_body.
+# Optional provider_config is forwarded to LiteLLM as extra_body; on the
+# search-rerank role it is forwarded to the OpenRouter SDK as provider
+# preferences when the model name starts with "openrouter/".
 
 search-search:
   model: openai/Qwen3.5-4B
@@ -12,6 +14,9 @@ search-search:
   #     allow_fallbacks: true
 
 search-rerank:
+  # litellm rerank providers (infinity, jina, cohere, ...); alternatively
+  # use an OpenRouter rerank model, e.g. "openrouter/cohere/rerank-x",
+  # served through the OpenRouter SDK (see research_agent.shared.rerank).
   model: infinity/LFM2.5-ColBERT-350M
   api_key: ignored-auth-key
   base_url: http://localhost:8080/v1

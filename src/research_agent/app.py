@@ -145,7 +145,7 @@ class PaperSearchApp:
         """
         try:
             await run_async(flush_opik_client)
-        except Exception:  # noqa: BLE001  # observability health must not fail the search result
+        except Exception:  # observability health must not fail the search result
             logging.getLogger(__name__).warning(
                 "opik flush failed; trace may be delayed",
                 exc_info=True,

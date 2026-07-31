@@ -127,7 +127,8 @@ def test_research_query_with_different_domains_is_not_equal() -> None:
 
 
 def test_research_query_domains_coerced_from_list_to_tuple() -> None:
-    query = ResearchQuery(text="hello world", domains=["cs", "bio"])  # ty: ignore[invalid-argument-type]  # Pydantic coerces list to tuple
+    # Pydantic coerces list to tuple at construction.
+    query = ResearchQuery(text="hello world", domains=["cs", "bio"])
     assert isinstance(query.domains, tuple)
     assert query.domains == ("cs", "bio")
 

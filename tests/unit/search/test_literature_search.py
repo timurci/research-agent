@@ -210,10 +210,14 @@ async def test_pubmed_handles_abstract_list(
 ) -> None:
     article = _make_pubmed_article(abstract="")
     article["MedlineCitation"]["Article"]["Abstract"]["AbstractText"] = [
-        "Part one introduces a new approach to the problem under study and "
-        "presents a detailed methodology that builds on prior work in the area.",
-        "Part two presents a thorough experimental evaluation and an analysis "
-        "of the results, with a discussion of limitations and future work.",
+        (
+            "Part one introduces a new approach to the problem under study and "
+            "presents a detailed methodology that builds on prior work in the area."
+        ),
+        (
+            "Part two presents a thorough experimental evaluation and an analysis "
+            "of the results, with a discussion of limitations and future work."
+        ),
     ]
     _stub_pubmed(monkeypatch, [article])
 

@@ -6,7 +6,7 @@ docstring-code-format = true
 
 [lint]
 select = ["ALL"]
-ignore = ["COM812"]
+ignore = ["COM812", "CPY001"]
 
 [lint.pydocstyle]
 convention = "google"

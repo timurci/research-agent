@@ -2,7 +2,8 @@
 
 Layer: Presentation.
 
-Wires HTTP routes to the runtime composition root (``PaperSearchApp``).
+Wires HTTP routes to the runtime composition root (``PaperSearchApp``)
+and registers the API exception handlers.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 
+from research_agent.api.handlers import register_exception_handlers
 from research_agent.api.routes import router
 from research_agent.app import build_paper_search_app
 from research_agent.shared.config.instructions import DEFAULT_INSTRUCTIONS_CONFIG_PATH
@@ -51,7 +53,7 @@ def create_app(*, paper_search_app: PaperSearchApp | None = None) -> FastAPI:
         yield
         try:
             flush_opik_client()
-        except Exception:  # noqa: BLE001  # shutdown flush must not fail app teardown
+        except Exception:  # shutdown flush must not fail app teardown
             logging.getLogger(__name__).warning(
                 "opik flush failed on shutdown; pending traces may be lost",
                 exc_info=True,
@@ -62,6 +64,7 @@ def create_app(*, paper_search_app: PaperSearchApp | None = None) -> FastAPI:
         version=_package_version(),
         lifespan=lifespan,
     )
+    register_exception_handlers(application)
     application.include_router(router)
     return application
 

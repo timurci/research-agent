@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib.metadata import version
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,13 +16,29 @@ from research_agent.app import SearchRun
 from research_agent.search.models import PaperInfo
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
 _ABSTRACT = (
     "A sufficiently long abstract describing the research methodology, "
     "experimental setup, results, and conclusions of this work in detail "
     "to satisfy the PaperInfo min_length=200 invariant enforced by Pydantic."
 )
+
+
+class _FakeRateLimitError(Exception):
+    """Mimics the 429 error shape shared by litellm and the OpenRouter SDK."""
+
+    status_code = 429
+
+    def __init__(
+        self,
+        *,
+        headers: Mapping[str, str] | None = None,
+        response_headers: Mapping[str, str] | None = None,
+    ) -> None:
+        super().__init__("rate limited")
+        self.headers = headers
+        self.response = SimpleNamespace(headers=response_headers)
 
 
 def _paper() -> PaperInfo:
@@ -51,6 +68,15 @@ def paper_search_app() -> MagicMock:
 @pytest.fixture
 def client(paper_search_app: MagicMock) -> Iterator[TestClient]:
     with TestClient(create_app(paper_search_app=paper_search_app)) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def client_no_raise(paper_search_app: MagicMock) -> Iterator[TestClient]:
+    with TestClient(
+        create_app(paper_search_app=paper_search_app),
+        raise_server_exceptions=False,
+    ) as test_client:
         yield test_client
 
 
@@ -84,6 +110,58 @@ def test_search_returns_papers_suggestion_and_trace_id(
 def test_search_rejects_short_text(client: TestClient) -> None:
     response = client.post("/search", json={"text": "ab"})
     assert response.status_code == 422
+
+
+def test_search_surfaces_rate_limit_with_retry_after(
+    client_no_raise: TestClient,
+    paper_search_app: MagicMock,
+) -> None:
+    paper_search_app.search = AsyncMock(
+        side_effect=_FakeRateLimitError(response_headers={"retry-after": "30"}),
+    )
+
+    response = client_no_raise.post("/search", json={"text": "quantum computing"})
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "30"
+    assert response.json() == {"detail": "rate limited"}
+
+
+def test_search_rate_limit_reads_headers_dict(
+    client_no_raise: TestClient,
+    paper_search_app: MagicMock,
+) -> None:
+    paper_search_app.search = AsyncMock(
+        side_effect=_FakeRateLimitError(headers={"retry-after": "15"}),
+    )
+
+    response = client_no_raise.post("/search", json={"text": "quantum computing"})
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "15"
+
+
+def test_search_rate_limit_without_retry_after(
+    client_no_raise: TestClient,
+    paper_search_app: MagicMock,
+) -> None:
+    paper_search_app.search = AsyncMock(side_effect=_FakeRateLimitError())
+
+    response = client_no_raise.post("/search", json={"text": "quantum computing"})
+
+    assert response.status_code == 429
+    assert "retry-after" not in response.headers
+
+
+def test_search_unhandled_error_returns_500(
+    client_no_raise: TestClient,
+    paper_search_app: MagicMock,
+) -> None:
+    paper_search_app.search = AsyncMock(side_effect=RuntimeError("boom"))
+
+    response = client_no_raise.post("/search", json={"text": "quantum computing"})
+
+    assert response.status_code == 500
 
 
 def test_feedback_records_thumbs(

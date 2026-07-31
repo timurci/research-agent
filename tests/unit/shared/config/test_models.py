@@ -33,4 +33,4 @@ def test_lm_config_optional_fields() -> None:
 def test_lm_config_is_frozen() -> None:
     config = LMConfig(model="gpt-4o")
     with pytest.raises(ValidationError):
-        config.model = "other"  # type: ignore[misc]
+        config.model = "other"  # ty: ignore[invalid-assignment]  # frozen models reject mutation at runtime

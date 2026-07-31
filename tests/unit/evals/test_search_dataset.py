@@ -10,6 +10,7 @@ import pytest
 from pydantic import HttpUrl, ValidationError
 
 from evals.search.dataset import (
+    MalformedSuggestRowError,
     SuggestInputsError,
     load_search_eval_data,
     load_search_queries,
@@ -84,7 +85,7 @@ def test_research_query_from_row_rejects_short_text() -> None:
 
 
 def test_research_query_from_row_rejects_bad_domains() -> None:
-    with pytest.raises(TypeError, match="list\\[str\\]"):
+    with pytest.raises(MalformedSuggestRowError, match="list\\[str\\]"):
         research_query_from_row({"text": "long enough query text", "domains": [1]})
 
 
@@ -146,12 +147,12 @@ def test_papers_from_payload_validates_paper_info() -> None:
 
 
 def test_papers_from_payload_rejects_non_list() -> None:
-    with pytest.raises(TypeError, match="papers must be list"):
+    with pytest.raises(MalformedSuggestRowError, match="papers must be list"):
         papers_from_payload("-")
 
 
 def test_papers_from_payload_rejects_invalid_payload() -> None:
-    with pytest.raises(TypeError, match="list\\[PaperInfo\\]"):
+    with pytest.raises(MalformedSuggestRowError, match="list\\[PaperInfo\\]"):
         papers_from_payload([{"title": "short"}])
 
 

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from research_agent.shared.config.models import LMConfig
     from research_agent.shared.rubric import Rubric
 
-_ALLOWED_SCORES: frozenset[float] = frozenset({0.0, 0.5, 1.0})
+_ALLOWED_SCORES: tuple[float, ...] = (0.0, 0.5, 1.0)
 
 
 class JudgeVerdict(BaseModel):
@@ -36,6 +36,12 @@ class JudgeVerdict(BaseModel):
     @field_validator("score")
     @classmethod
     def _score_is_band(cls, value: float) -> float:
+        """Snap a judge score to the nearest allowed band.
+
+        ``_ALLOWED_SCORES`` is ordered ascending and ``min`` keeps the
+        first minimum, so midpoints such as ``0.25`` and ``0.75`` resolve
+        to the lower band.
+        """
         return min(_ALLOWED_SCORES, key=lambda band: abs(band - value))
 
 

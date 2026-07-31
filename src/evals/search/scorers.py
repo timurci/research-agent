@@ -28,7 +28,11 @@ from research_agent.search.metrics import (
     suggestion_quality,
 )
 from research_agent.search.models import PaperInfo, ResearchQuery
-from research_agent.search.rubrics import SUGGESTION_QUALITY_RUBRIC
+from research_agent.search.rubrics import (
+    SUGGESTION_QUALITY_RUBRIC,
+    format_suggestion_judge_context,
+    format_suggestion_judge_input,
+)
 from research_agent.shared.config.lm import ROLE_LLM_JUDGE
 from research_agent.shared.config.lm import lm_config as load_lm_config
 from research_agent.shared.judge import RubricJudge
@@ -72,7 +76,6 @@ class _QualityJudge(Protocol):
 
 
 _PAPER_LIST_ADAPTER: TypeAdapter[list[PaperInfo]] = TypeAdapter(list[PaperInfo])
-_JUDGE_ABSTRACT_CHARS: int = 500
 
 
 def _require_paper_list(outputs: object) -> list[PaperInfo]:
@@ -90,27 +93,6 @@ def _require_suggestion(outputs: object) -> str:
         msg = f"suggestion must be str, got {type(outputs).__name__}"
         raise ScorerShapeError(msg)
     return outputs
-
-
-def format_suggestion_judge_input(query: ResearchQuery) -> str:
-    """Format a research query as judge task input text."""
-    if query.domains:
-        domains = ", ".join(query.domains)
-        return f"Query: {query.text}\nDomains: {domains}"
-    return f"Query: {query.text}"
-
-
-def format_suggestion_judge_context(papers: list[PaperInfo]) -> str:
-    """Format paper titles and abstract snippets as judge context."""
-    if not papers:
-        return "(no papers provided)"
-    blocks: list[str] = []
-    for index, paper in enumerate(papers, start=1):
-        abstract = paper.abstract[:_JUDGE_ABSTRACT_CHARS]
-        blocks.append(
-            f"[{index}] Title: {paper.title}\nAbstract: {abstract}",
-        )
-    return "\n\n".join(blocks)
 
 
 def suggestion_quality_judge(

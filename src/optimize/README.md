@@ -63,7 +63,8 @@ the suggestion-inputs dataset (no live search).
 
 ### `search-suggest`
 
-- Path: local Opik export
+- Path: local Opik export (gitignored; export a search-search Opik run's
+  `dataset.query` + `output.papers` to regenerate) at
   `data/optimize/input/eval-search-search-io.json` (same file for evals
   and optimize until a dedicated train/test split exists)
 - Shape (Opik search-search I/O export rows):
@@ -119,8 +120,10 @@ Compiled programs are written to `data/optimize/output/<module>.json`.
 
 - Live search optimization calls PubMed, CrossRef, and OpenAlex inside the
   search student — slow and costly; use `--limit` for smoke runs.
-- Suggestion optimization does not call literature indexes; it needs the
-  materialized suggestion-inputs HF dataset.
+- Suggestion optimization does not call literature indexes; it reads the
+  local Opik search-search I/O export
+  `data/optimize/input/eval-search-search-io.json` (gitignored; export
+  from a search-search Opik run).
 - GEPA invokes the metric once when scoring candidates and again when
   building the reflective dataset, so labeler/judge LMs run roughly twice
   per example per iteration.

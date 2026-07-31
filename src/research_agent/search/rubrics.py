@@ -2,14 +2,20 @@
 
 Layer: Domain.
 
-Slice-specific ``Rubric`` instances. The ``Rubric`` type lives in
+Slice-specific ``Rubric`` instances and the text formatters that render
+domain objects as judge task fields. The ``Rubric`` type lives in
 ``research_agent.shared.rubric``. Length is scored by code metrics, not
 by these rubrics.
 """
 
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from research_agent.shared.rubric import Rubric
+
+if TYPE_CHECKING:
+    from research_agent.search.models import PaperInfo, ResearchQuery
+
+JUDGE_ABSTRACT_CHARS: Final[int] = 500
 
 SUGGESTION_QUALITY_RUBRIC: Final[Rubric] = Rubric(
     name="suggestion-quality",
@@ -55,3 +61,27 @@ SUGGESTION_QUALITY_RUBRIC: Final[Rubric] = Rubric(
         ),
     ),
 )
+
+
+def format_suggestion_judge_input(query: ResearchQuery) -> str:
+    """Format a research query as judge task input text."""
+    if query.domains:
+        domains = ", ".join(query.domains)
+        return f"Query: {query.text}\nDomains: {domains}"
+    return f"Query: {query.text}"
+
+
+def format_suggestion_judge_context(papers: list[PaperInfo]) -> str:
+    """Format paper titles and abstract snippets as judge context.
+
+    Abstracts are truncated to ``JUDGE_ABSTRACT_CHARS``.
+    """
+    if not papers:
+        return "(no papers provided)"
+    blocks: list[str] = []
+    for index, paper in enumerate(papers, start=1):
+        abstract = paper.abstract[:JUDGE_ABSTRACT_CHARS]
+        blocks.append(
+            f"[{index}] Title: {paper.title}\nAbstract: {abstract}",
+        )
+    return "\n\n".join(blocks)

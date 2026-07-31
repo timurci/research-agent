@@ -10,6 +10,7 @@ import pytest
 from pydantic import HttpUrl, ValidationError
 
 from optimize.search.dataset import (
+    MalformedSuggestRowError,
     SuggestInputsError,
     load_search_queries,
     load_search_trainset,
@@ -84,7 +85,7 @@ def test_research_query_from_row_rejects_short_text() -> None:
 
 
 def test_research_query_from_row_rejects_bad_domains() -> None:
-    with pytest.raises(TypeError, match="list\\[str\\]"):
+    with pytest.raises(MalformedSuggestRowError, match="list\\[str\\]"):
         research_query_from_row({"text": "long enough query text", "domains": [1]})
 
 

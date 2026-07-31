@@ -18,6 +18,7 @@ uv.lock
 # Generated data (keep directory placeholders via .gitkeep, ignore contents)
 data/**/output/*
 !data/**/output/.gitkeep
+data/optimize/input/*
 
 # Coding agent or IDE configurations
 .opencode

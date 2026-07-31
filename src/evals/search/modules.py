@@ -56,7 +56,7 @@ def as_suggest_task(
     def task(dataset_item: dict[str, Any]) -> dict[str, Any]:
         query = ResearchQuery.model_validate(dataset_item["query"])
         papers = [PaperInfo.model_validate(paper) for paper in dataset_item["papers"]]
-        suggestion = _run_suggest_agent(agent((query, papers)))
+        suggestion = _run_agent(agent((query, papers)))
         return {
             "query": query.model_dump(mode="json"),
             "papers": [paper.model_dump(mode="json") for paper in papers],
@@ -66,13 +66,8 @@ def as_suggest_task(
     return task
 
 
-def _run_agent(coro: Awaitable[list[PaperInfo]]) -> list[PaperInfo]:
+def _run_agent[T](coro: Awaitable[T]) -> T:
     """Run an async agent call from the synchronous Opik task path."""
-    return asyncio.run(coro)
-
-
-def _run_suggest_agent(coro: Awaitable[str]) -> str:
-    """Run an async suggestion agent from the synchronous Opik task path."""
     return asyncio.run(coro)
 
 

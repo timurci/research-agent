@@ -37,20 +37,27 @@ class SuggestInputsError(Exception):
     """Raised when the suggestion-inputs export is missing or malformed."""
 
 
+class MalformedSuggestRowError(Exception):
+    """Raised when a row or payload violates the expected input schema."""
+
+
 def research_query_from_row(row: Mapping[str, object]) -> ResearchQuery:
     """Map one HF row to a ``ResearchQuery``.
 
     Expects ``text: str`` and optional ``domains: list[str]``.
+
+    Raises:
+        MalformedSuggestRowError: If *row* fields have the wrong type.
     """
     text, domains = row["text"], row.get("domains")
     if not isinstance(text, str):
         msg = f"text must be str, got {type(text).__name__}"
-        raise TypeError(msg)
+        raise MalformedSuggestRowError(msg)
     if domains is not None and not (
         isinstance(domains, list) and all(isinstance(d, str) for d in domains)
     ):
         msg = "domains must be list[str] or None"
-        raise TypeError(msg)
+        raise MalformedSuggestRowError(msg)
     return ResearchQuery.model_validate(
         {"text": text, "domains": domains or None},
     )
@@ -64,17 +71,18 @@ def papers_from_payload(raw: object, *, limit: int | None = None) -> list[PaperI
         limit: Optional max length (e.g. ``SUGGESTION_TOP_N``).
 
     Raises:
-        TypeError: If *raw* is not a list of valid paper objects.
+        MalformedSuggestRowError: If *raw* is not a list of valid paper
+            objects.
     """
     if not isinstance(raw, list):
         msg = f"papers must be list, got {type(raw).__name__}"
-        raise TypeError(msg)
+        raise MalformedSuggestRowError(msg)
     payload = raw if limit is None else raw[:limit]
     try:
         return _PAPER_LIST_ADAPTER.validate_python(payload)
     except ValidationError as exc:
         msg = f"papers must be list[PaperInfo]: {exc}"
-        raise TypeError(msg) from exc
+        raise MalformedSuggestRowError(msg) from exc
 
 
 def suggestion_pair_from_opik_row(
@@ -87,11 +95,14 @@ def suggestion_pair_from_opik_row(
     Expects ``dataset.query`` (``ResearchQuery`` fields) and
     ``output.papers`` (``list[PaperInfo]`` fields). Papers are truncated
     to *paper_limit* to match the runtime suggestion step.
+
+    Raises:
+        MalformedSuggestRowError: If *row* does not match that shape.
     """
     query_raw = row[_OPIK_QUERY_KEY]
     if not isinstance(query_raw, dict):
         msg = f"{_OPIK_QUERY_KEY} must be a dict, got {type(query_raw).__name__}"
-        raise TypeError(msg)
+        raise MalformedSuggestRowError(msg)
     query_fields: dict[str, object] = {
         str(key): value for key, value in query_raw.items()
     }
@@ -191,7 +202,7 @@ def load_suggest_pairs(
                 row,
                 paper_limit=paper_limit,
             )
-        except KeyError, TypeError, ValidationError:
+        except KeyError, MalformedSuggestRowError, ValidationError:
             continue
         if papers:
             pairs.append((query, papers))

@@ -18,8 +18,6 @@ from evals.search.scorers import (
     SearchResultRelevanceMetric,
     SuggestionLengthMetric,
     SuggestionQualityMetric,
-    format_suggestion_judge_context,
-    format_suggestion_judge_input,
     relevance_metrics_from_ranking,
 )
 from research_agent.search.metrics import (
@@ -27,6 +25,10 @@ from research_agent.search.metrics import (
     RelevanceMetric,
 )
 from research_agent.search.models import PaperInfo, ResearchQuery
+from research_agent.search.rubrics import (
+    format_suggestion_judge_context,
+    format_suggestion_judge_input,
+)
 from research_agent.shared.judge import JudgeVerdict
 
 if TYPE_CHECKING:
@@ -185,6 +187,7 @@ def test_relevance_metric_empty_outputs_skips_reranker() -> None:
     assert result.name == "search_result_relevance"
     assert result.value == 0.0
     assert result.metadata == {"passing": "False"}
+    assert fake.calls == []
 
 
 class _FakeQualityJudge:

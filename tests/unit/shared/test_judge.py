@@ -18,6 +18,11 @@ def test_judge_verdict_snaps_score_to_nearest_band() -> None:
     assert JudgeVerdict(score=0.8, failing=False, reason="high").score == 1.0
 
 
+def test_judge_verdict_snaps_equidistant_score_to_lower_band() -> None:
+    assert JudgeVerdict(score=0.25, failing=False, reason="tie low").score == 0.0
+    assert JudgeVerdict(score=0.75, failing=False, reason="tie high").score == 0.5
+
+
 @pytest.mark.asyncio
 async def test_rubric_judge_maps_prediction_to_verdict() -> None:
     judge = RubricJudge(
@@ -26,7 +31,7 @@ async def test_rubric_judge_maps_prediction_to_verdict() -> None:
     )
     fake_pred = SimpleNamespace(score=0.5, failing=False, reason="Mixed quality.")
     with patch.object(
-        judge._predict,  # test doubles the DSPy predictor
+        judge._predict,
         "aforward",
         new=AsyncMock(return_value=fake_pred),
     ) as aforward:

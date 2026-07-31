@@ -253,6 +253,12 @@ def test_main_limit_flag_overrides_module_sample_limit(tmp_path: Path) -> None:
             ],
         )
 
+    dataset = opik_mod.Opik.return_value.get_or_create_dataset.return_value
+    inserted = dataset.insert.call_args.args[0]
+    assert len(inserted) == 2
+    experiment_config = opik_mod.evaluate.call_args.kwargs["experiment_config"]
+    assert experiment_config["eval.sample_limit"] == 2
+
 
 def test_main_rejects_zero_limit(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)

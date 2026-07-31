@@ -107,7 +107,7 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 - Do not import `datagen`, `optimize`, or `evals` from `research_agent`.
 - Do not import DSPy, LiteLLM, Opik, or other LLM libraries into Domain or Application.
 - Do not import between slices.
-- Do not reimplement domain metric logic in MLflow scorers or GEPA metrics (adapt I/O only; map `EvaluationScore` → Opik `ScoreResult` or GEPA `ScoreWithFeedback`).
+- Do not reimplement domain metric logic in Opik scorers or GEPA metrics (adapt I/O only; map `EvaluationScore` → Opik `ScoreResult` or GEPA `ScoreWithFeedback`).
 - Do not bound `Agent` type variables to `BaseModel`.
 - Do not re-validate structure Pydantic already enforces.
 - Do not duplicate a definition's behavior, lifecycle, or invariants in another module's docstring or comments. The call site documents only what is local to *its* composition.
@@ -117,6 +117,6 @@ Do not stub unused reserved paths. Datagen entrypoint: `uv run generate-queries 
 
 - `uv run pytest` runs unit tests + coverage on `src/research_agent` only; live tests need `uv run pytest -m live`.
 - `ruff` uses `select = ["ALL"]`; do not add new backlog violations.
-- Optimize/eval data: `search-search` uses HF `tcakmako/research_queries` (train for optimize, test for evals). `search-suggest` loads a local Opik search-search I/O export at `data/optimize/input/eval-search-search-io.json` (`dataset.query` + `output.papers`; papers truncated to `SUGGESTION_TOP_N`). Default pool sample 50 with pool-size-aware train/val split. Compiled artifacts go under `data/optimize/output/`.
+- Optimize/eval data: `search-search` uses HF `tcakmako/research_queries` (train for optimize, test for evals). `search-suggest` loads a local Opik search-search I/O export at `data/optimize/input/eval-search-search-io.json` (gitignored; export `dataset.query` + `output.papers` from a search-search Opik run; papers truncated to `SUGGESTION_TOP_N`). Default pool sample 50 with pool-size-aware train/val split. Compiled artifacts go under `data/optimize/output/`.
 - Live optimize for `search-search` hits PubMed/CrossRef/OpenAlex inside the student and a relevance labeler LM in the metric; `search-suggest` uses fixed papers from the export plus an `llm-judge` quality metric — use `--limit` for smoke tests.
 - CLI defaults in `datagen` must stay aligned with the `data/` layout.

@@ -176,6 +176,27 @@ async def test_record_feedback_offloads_to_observability() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_record_feedback_propagates_observability_failure() -> None:
+    app = PaperSearchApp(
+        run_workflow=MagicMock(),
+        project_name="proj",
+    )
+    with (
+        patch(
+            "research_agent.app.run_async",
+            new_callable=AsyncMock,
+            side_effect=lambda func, *args: func(*args),
+        ),
+        patch(
+            "research_agent.app.record_user_feedback",
+            side_effect=RuntimeError("opik unreachable"),
+        ),
+        pytest.raises(RuntimeError, match="opik unreachable"),
+    ):
+        await app.record_feedback("tid-1", useful=False)
+
+
 def _write_lm_config(path: Path) -> None:
     path.write_text(
         yaml.safe_dump(

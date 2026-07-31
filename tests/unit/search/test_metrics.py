@@ -22,6 +22,7 @@ from research_agent.search.metrics import (
     SUGGESTION_MAX_WORDS,
     SUGGESTION_MIN_WORDS,
     RelevanceMetric,
+    SuggestionQualityBandError,
     ndcg_at_10,
     search_result_count,
     search_result_relevance,
@@ -440,5 +441,5 @@ def test_suggestion_quality_accepts_rubric_bands(
 
 @pytest.mark.parametrize("score", [-0.1, 0.25, 0.75, 1.1, 2.0])
 def test_suggestion_quality_rejects_non_band_scores(score: float) -> None:
-    with pytest.raises(ValueError, match="suggestion quality score"):
+    with pytest.raises(SuggestionQualityBandError, match="suggestion quality score"):
         suggestion_quality(score=score, passing=True, reason="ok")

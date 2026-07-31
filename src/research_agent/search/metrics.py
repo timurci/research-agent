@@ -28,6 +28,10 @@ SUGGESTION_MAX_WORDS = 500
 SUGGESTION_QUALITY_SCORES: frozenset[float] = frozenset({0.0, 0.5, 1.0})
 
 
+class SuggestionQualityBandError(Exception):
+    """Raised when a quality score is not an allowed rubric band value."""
+
+
 class RelevanceMetric(BaseModel):
     """Represents a relevance score."""
 
@@ -283,12 +287,13 @@ def suggestion_quality(
         Domain evaluation score for suggestion quality.
 
     Raises:
-        ValueError: If *score* is not an allowed rubric band value.
+        SuggestionQualityBandError: If *score* is not an allowed rubric
+            band value.
     """
     if score not in SUGGESTION_QUALITY_SCORES:
         msg = (
             f"suggestion quality score must be one of "
             f"{sorted(SUGGESTION_QUALITY_SCORES)}, got {score}"
         )
-        raise ValueError(msg)
+        raise SuggestionQualityBandError(msg)
     return EvaluationScore(passing=passing, reason=reason, score=score)

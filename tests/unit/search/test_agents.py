@@ -11,6 +11,7 @@ import pytest
 from pydantic import HttpUrl
 
 from research_agent.search.agents import (
+    Reranker,
     SearchOutcome,
     SuggestionGenerator,
     _SuggestionGeneratorProgram,
@@ -20,6 +21,8 @@ from research_agent.shared.config.models import LMConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from research_agent.shared.rerank import RerankScore
 
 
 def test_search_outcome_values() -> None:
@@ -60,6 +63,32 @@ def _signature_instructions(signature: object) -> str:
     instructions = getattr(signature, "instructions", None)
     assert isinstance(instructions, str)
     return instructions
+
+
+class _FakeRerankClient:
+    """Rerank client stub recording payloads and returning fixed scores."""
+
+    def __init__(self, scores: list[RerankScore]) -> None:
+        self._scores = scores
+        self.calls: list[tuple[str, list[str]]] = []
+
+    async def rerank(self, *, query: str, documents: list[str]) -> list[RerankScore]:
+        self.calls.append((query, documents))
+        return self._scores
+
+
+def _make_paper(title: str) -> PaperInfo:
+    return PaperInfo(
+        title=title,
+        abstract=(
+            "A sufficiently long abstract describing the research methodology, "
+            "experimental setup, results, and conclusions of this work in detail "
+            "to satisfy the PaperInfo min_length=200 invariant enforced by Pydantic."
+        ),
+        authors=("Alice",),
+        url=HttpUrl("https://example.com/paper"),
+        open_access=False,
+    )
 
 
 @pytest.fixture
@@ -172,3 +201,50 @@ async def test_suggestion_generator_returns_suggestion(
         result = await agent((research_query, [paper]))
 
     assert result == "focus on quantum error correction"
+
+
+def test_reranker_builds_client_from_config() -> None:
+    config = LMConfig(model="openrouter/cohere/rerank-x")
+
+    with patch("research_agent.search.agents.build_rerank_client") as builder:
+        Reranker(config)
+
+    builder.assert_called_once_with(config)
+
+
+@pytest.mark.asyncio
+async def test_reranker_orders_papers_by_client_scores(
+    research_query: ResearchQuery,
+) -> None:
+    alpha = _make_paper("Alpha Paper")
+    beta = _make_paper("Beta Paper")
+    reranker = Reranker(LMConfig(model="infinity/test-rerank"))
+    reranker._client = _FakeRerankClient(
+        [
+            {"index": 1, "relevance_score": 0.9},
+            {"index": 0, "relevance_score": 0.1},
+        ]
+    )
+
+    out = await reranker((research_query, [alpha, beta]))
+
+    assert [p.title for p in out] == ["Beta Paper", "Alpha Paper"]
+
+
+@pytest.mark.asyncio
+async def test_reranker_passes_domains_and_abstracts_to_client(
+    paper: PaperInfo,
+) -> None:
+    query = ResearchQuery(text="quantum computing", domains=["physics", "cs"])
+    fake = _FakeRerankClient([{"index": 0, "relevance_score": 0.5}])
+    reranker = Reranker(LMConfig(model="infinity/test-rerank"))
+    reranker._client = fake
+
+    await reranker.relevance((query, [paper]))
+
+    assert fake.calls == [
+        (
+            "Query: quantum computing; Domains: physics, cs",
+            [f"Title: {paper.title}; Abstract: {paper.abstract[:2048]}"],
+        )
+    ]

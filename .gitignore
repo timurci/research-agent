@@ -9,9 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-# Package manager lock
-uv.lock
-
 # Pytest generated files
 .coverage
 

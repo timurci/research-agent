@@ -4,15 +4,16 @@ Synthetic search-query generation tooling for DSPy prompt optimization.
 
 This package is tooling, not part of the runtime application. It shares
 domain models from `research_agent.search.models` for validation, and its
-output is consumed by the optimization pipeline in `src/optimize/`.
+output forms the training corpus for the search optimization pipeline in
+`src/optimize/`.
 
 ## Purpose
 
 Generate varied `ResearchQuery` objects to use as the training set when
-optimizing the search prompt. The optimization pipeline
-runs the search capability live and scores the returned `list[PaperInfo]` with an
-embedding-similarity metric (defined in `src/optimize/`), so the datagen
-package only needs to produce queries — not pre-baked result sets or labels.
+optimizing the search prompt. The optimization pipeline runs the search
+capability live and labels the returned `list[PaperInfo]` for relevance
+with a held-out reranker LM, so the datagen package only needs to produce
+queries — not pre-baked result sets or labels.
 
 ## Pipeline
 
@@ -137,8 +138,10 @@ Without fallbacks (pin to the first provider, fail if it errors):
 
 - Imports `research_agent.search.models` for type validation.
 - The runtime `research_agent` package never imports from `datagen`.
-- The downstream consumer is `src/optimize/`, which loads the JSONL file
-  into `dspy.Example` objects and runs the search optimization loop.
+- The generated queries form the training corpus for the search
+  optimization loop. `src/optimize/` reads that corpus from the Hugging
+  Face `tcakmako/research_queries` **train** split; it does not read
+  `queries_train.jsonl` directly.
 
 ## Configuration
 
